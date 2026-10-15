@@ -23,8 +23,11 @@ export function App() {
 
   const webgpuAvailable = useMemo(() => 'gpu' in navigator, []);
 
-  const [asrId, setAsrId] = useState(ASR_MODELS[2].id);
-  const [dtype, setDtype] = useState<Dtype>(DEFAULT_DTYPE[ASR_MODELS[2].id]);
+  // Picked per the CoRaL leaderboard data in catalog.ts: the most accurate
+  // size that stays practical to download and run in-browser.
+  const defaultAsr = ASR_MODELS.find((m) => m.id === 'whisper-large-v3-turbo') ?? ASR_MODELS[0];
+  const [asrId, setAsrId] = useState(defaultAsr.id);
+  const [dtype, setDtype] = useState<Dtype>(DEFAULT_DTYPE[defaultAsr.id]);
   const [device, setDevice] = useState<Device>('webgpu');
   const [ttsId, setTtsId] = useState(TTS_MODELS[0].id);
 

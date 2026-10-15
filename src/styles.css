@@ -105,6 +105,10 @@ h3 {
   color: var(--muted);
 }
 
+a {
+  color: var(--accent);
+}
+
 .note {
   margin: 8px 0 0;
   font-size: 13px;

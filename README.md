@@ -63,12 +63,39 @@ larger recogniser reduces, but does not remove, this effect.
 | TTS | System voice (`da-DK`) | No download; quality depends on what your OS has installed. |
 | Phonemes | espeak-ng via `piper_phonemize` | 19 MB. Needed for TTS *and* for phoneme-level scoring. |
 
-There is no Danish-specific ASR fine-tune on the Hub with a transformers.js-compatible
-ONNX layout, which is why the choice here is model *size* rather than a Danish model.
+### Why stock Whisper, not a Danish-tuned model
 
-In testing, `whisper-base` garbled a clean synthesised sentence
-(*"Jep igen hen, kop kaffe."*) while `whisper-small` transcribed it exactly — hence
-small being the default.
+The [CoRaL Danish ASR leaderboard](https://huggingface.co/spaces/RyeAI/danish-asr-leaderboard)
+ranks Danish-specific fine-tunes far ahead of stock Whisper (its #2 model,
+`danish-foundation-models/edda-v0.2`, scores 8.8% WER against stock `whisper-large-v3`'s
+23.9%). None of them are usable in this app yet, for three different reasons depending
+on the model:
+
+- Most (`edda`, `roest`, `brage`, `saga`, `hviske-v3/v5/v5.1/v5.3/v6`, `danstral`,
+  `milo-asr`) have no ONNX export published at all.
+- `syvai/hviske-v5-tiny` has one, and transformers.js 4.3.1 even ships native code for
+  its `cohere_asr` architecture — but the repo is gated behind Hub authentication (this
+  app has no login flow), and separately, its files are named `encoder.onnx`/
+  `decoder.onnx` while transformers.js hardcodes `encoder_model.onnx`/
+  `decoder_model_merged.onnx` for that architecture, so it wouldn't resolve even if it
+  weren't gated.
+- `RyeAI/ekko-v1-tiny` and the `3dio-ai/svale-*` models are NVIDIA Parakeet RNNT/TDT
+  fine-tunes exported in `sherpa-onnx` format (separate encoder/decoder/**joiner**
+  networks needing a streaming label-loop decode). transformers.js does ship a
+  `parakeet` module, but only the CTC variant (`ParakeetForCTC`) — not RNNT/TDT — so it
+  doesn't cover these either.
+
+So the choice here is model *size* among stock Whisper, not a Danish model. The `coral`
+scores in `catalog.ts` (mean WER/CER across CoRaL conversation + read-aloud, FTSpeech,
+Common Voice 17 da, and FLEURS da, from the leaderboard above, dated 2026-10-15) are
+what `whisper-large-v3-turbo` is picked as the default against — not a single clean
+test sentence. Trust that gap more than your own quick test: `whisper-small` transcribes
+an easy synthesised sentence perfectly, yet scores 46.9% WER on the real benchmark.
+
+Converting one of the open, standard-architecture options (`edda-v0.2` is apache-2.0 and
+plain Whisper architecture, just unexported) to ONNX is possible but out of scope here —
+it needs a multi-GB download, an `optimum` export, and somewhere for the browser to fetch
+the result from, i.e. a Hub repo to push it to.
 
 ### Managing downloads
 
@@ -112,6 +139,15 @@ Inference runs in workers so a multi-hundred-megabyte model load never blocks th
   `vite build` also emits two ~26 MB `*.asyncify.wasm` assets: those are static
   references inside ORT's own ESM bundles that `wasmPaths` overrides at runtime, so
   they are dead weight in `dist` rather than something the app fetches.
+- The TTS worker probes `navigator.gpu.requestAdapter()` itself before telling
+  onnxruntime-web to use WebGPU, rather than trusting the capability flag the UI reads
+  on the main thread (WebGPU support inside a dedicated Worker can lag behind
+  main-thread support). This isn't just cosmetic: once a `session.create()` call fails
+  while resolving the `'webgpu'` execution provider, onnxruntime-web's wasm backend
+  caches that failure as a module-level singleton and refuses to retry wasm init for
+  the rest of the worker's lifetime (`"previous call to 'initWasm()' failed"`) — so a
+  doomed webgpu attempt must never be issued in the first place, rather than caught and
+  retried after the fact.
 
 ## Licensing
 

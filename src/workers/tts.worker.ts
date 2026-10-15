@@ -147,26 +147,58 @@ async function runPhonemiser(texts: string[], language: string): Promise<Phonemi
   return items;
 }
 
+/**
+ * Minimal shape of `navigator.gpu`, since no `@webgpu/types` dependency is
+ * installed and the DOM lib shipped with this TS version doesn't include it.
+ */
+interface MinimalGpu {
+  requestAdapter: () => Promise<unknown>;
+}
+
+/**
+ * `navigator.gpu` existing is not enough: WebGPU support inside a dedicated
+ * Worker can lag behind main-thread support (it did at the time of writing,
+ * in some browsers), so the capability flag the UI reads on the main thread
+ * is not reliable evidence it will work here. Requesting a real adapter is.
+ *
+ * This matters beyond cosmetics: once a session.create() call fails while
+ * resolving the 'webgpu' execution provider, onnxruntime-web's wasm backend
+ * caches that failure as a module-level singleton and refuses to retry wasm
+ * init for the rest of this worker's lifetime ("previous call to 'initWasm()'
+ * failed") — including for a subsequent plain 'wasm' attempt. So the fix is
+ * to never let a doomed 'webgpu' attempt touch the shared wasm backend at
+ * all, rather than to catch and fall back after the fact.
+ */
+async function supportsWebgpu(): Promise<boolean> {
+  const gpu = (navigator as Navigator & { gpu?: MinimalGpu }).gpu;
+  if (!gpu) return false;
+  try {
+    return (await gpu.requestAdapter()) !== null;
+  } catch {
+    return false;
+  }
+}
+
 async function createSession(
   bytes: ArrayBuffer,
 ): Promise<{ session: ort.InferenceSession; device: Device }> {
-  const attempts: Device[] = ['webgpu', 'wasm'];
-  let last: unknown;
-  for (const device of attempts) {
-    try {
-      const session = await ort.InferenceSession.create(new Uint8Array(bytes), {
-        executionProviders: [device],
-      });
-      return { session, device };
-    } catch (error) {
-      last = error;
-    }
+  const webgpu = await supportsWebgpu();
+  // One single call, not one attempt per device: passing both lets ORT try
+  // 'wasm' as an internal fallback within the same call if 'webgpu' fails,
+  // without us ever issuing a second top-level call that could hit the
+  // poisoned-wasm-init failure described above.
+  const executionProviders: Device[] = webgpu ? ['webgpu', 'wasm'] : ['wasm'];
+
+  try {
+    const session = await ort.InferenceSession.create(new Uint8Array(bytes), {
+      executionProviders,
+    });
+    return { session, device: webgpu ? 'webgpu' : 'wasm' };
+  } catch (error) {
+    throw new Error(
+      `Could not start the voice: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
-  throw new Error(
-    `Could not start the voice on WebGPU or WASM: ${
-      last instanceof Error ? last.message : String(last)
-    }`,
-  );
 }
 
 serve({

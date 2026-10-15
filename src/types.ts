@@ -10,6 +10,12 @@ export interface AsrModelSpec {
   /** Approximate download size in bytes, keyed by quantisation. */
   sizes: Record<Dtype, number>;
   note: string;
+  /**
+   * Mean WER/CER on real Danish speech (conversation, read-aloud, FTSpeech,
+   * Common Voice, FLEURS), from the CoRaL-based community leaderboard. Not
+   * measured by this app — see the source link next to where this is used.
+   */
+  coral?: { wer: number; cer: number };
 }
 
 export interface TtsModelSpec {
