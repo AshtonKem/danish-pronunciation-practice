@@ -7,9 +7,14 @@ import { splitWords, toPhonemeStrings, type PhonemizeItem } from '../lib/phoneme
 import { serve } from '../lib/rpc';
 import type { Device } from '../types';
 
-// Served out of node_modules by the dev server and copied into dist on build,
+// Served out of node_modules by the dev server and copied into dist's root
+// (not alongside the worker chunk, which Vite nests under assets/) on build,
 // so the runtime stays same-origin and works offline once cached.
-ort.env.wasm.wasmPaths = '/ort/';
+// `BASE_URL` rather than a hardcoded "/ort/" -- the app isn't necessarily
+// served from the origin root (e.g. a GitHub Pages project page lives at
+// <user>.github.io/<repo>/), and Vite guarantees this reflects the
+// configured `base`, always as an absolute path from the site root.
+ort.env.wasm.wasmPaths = `${import.meta.env.BASE_URL}ort/`;
 // Pinned to 1 (ORT: "If set to 1, no worker thread will be spawned") rather
 // than scaled with crossOriginIsolated/hardwareConcurrency. Any value above 1
 // makes Emscripten's pthread runtime spin up its own worker pool — a nested

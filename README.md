@@ -24,6 +24,39 @@ Then, in the app:
 Chrome or Edge is required for WebGPU. Without it the app falls back to WASM on the
 CPU, which works but is noticeably slower.
 
+## Deploying to GitHub Pages
+
+A workflow (`.github/workflows/deploy-pages.yml`) builds and deploys on every push to
+`main`. One manual, one-time step first: repo **Settings → Pages → Source → GitHub
+Actions** (it defaults to "Deploy from a branch", which this workflow doesn't use).
+After that, the live URL is `https://<user>.github.io/danish-pronunciation-practice/`.
+
+GitHub Pages serves a project repo under that `/danish-pronunciation-practice/` path,
+not at the origin root, and has no way to set custom response headers of its own —
+`vite.config.ts`'s `base` and `src/workers/tts.worker.ts`'s `wasmPaths` handle the
+first; the second needs its own explanation:
+
+This app needs `Cross-Origin-Opener-Policy`/`Cross-Origin-Embedder-Policy` for
+`SharedArrayBuffer` (see "Two notes on the build" below), and Pages can't send them.
+`public/coi-serviceworker.js`, registered from `index.html`, works around this: a
+service worker can set response headers on its own synthesized responses just as well
+as a real server can, which is the standard, widely-used technique for exactly this
+situation (same-origin requests only — see the file's own comment for why cross-origin
+ones are deliberately left untouched). The registration script reloads the page once on
+first visit so the newly-registered worker actually controls the load that follows;
+subsequent visits don't need that.
+
+I verified every static piece of this (the build output resolves correctly under the
+base path, with no server headers at all, matching Pages exactly) but **not** the one
+dynamic piece that actually matters — whether the service worker achieves
+`window.crossOriginIsolated` in a real browser — since I had no browser available to
+test in. It's a well-established pattern, not something novel, but test the deployed
+site yourself before trusting it: load a model and confirm it actually works, rather
+than hanging the way it does without `SharedArrayBuffer`.
+
+Renamed the repo, or deploying under a different name? Update the hardcoded
+`'/danish-pronunciation-practice/'` in `vite.config.ts` to match.
+
 ## How the error highlighting works
 
 Comparing two strings only tells you *which words* were wrong. To say *which sounds*

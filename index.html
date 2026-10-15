@@ -3,6 +3,25 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <!--
+      Cross-origin isolation shim for hosts with no header control (GitHub
+      Pages). A relative path so it resolves under a project-page subpath
+      without needing to know `base` here; must run before any module load,
+      since the reload it may trigger needs to happen as early as possible.
+      No-ops when the page is already isolated (a real dev/preview server).
+      See public/coi-serviceworker.js for what it actually does.
+    -->
+    <script>
+      if ('serviceWorker' in navigator && !window.crossOriginIsolated) {
+        navigator.serviceWorker.register('coi-serviceworker.js').then(() => {
+          // A fresh registration doesn't control this already-loading page;
+          // reload once so the next load goes through it. If a controller
+          // already exists and isolation still isn't on, something else
+          // (an unsupported browser) is blocking it -- don't loop over that.
+          if (!navigator.serviceWorker.controller) window.location.reload();
+        });
+      }
+    </script>
     <title>Dansk udtale — Danish Speech Practice</title>
   </head>
   <body>

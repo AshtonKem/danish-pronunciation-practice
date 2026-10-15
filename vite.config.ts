@@ -59,8 +59,15 @@ const isolationHeaders = {
   'Cross-Origin-Embedder-Policy': 'credentialless',
 };
 
-export default defineConfig({
+export default defineConfig(({ command, isPreview }) => ({
   plugins: [react(), serveOrtRuntime()],
+  // GitHub Pages serves a project repo at <user>.github.io/<repo>/, not at
+  // the origin root — every absolute "/..." asset reference needs this
+  // prefix there. `vite preview` also needs it: it serves the already-built
+  // dist/, whose asset references were baked in with this same prefix, and
+  // reports command: 'serve' like plain dev, with `isPreview` the only way
+  // to tell the two apart. Plain dev stays at root.
+  base: command === 'build' || isPreview ? '/danish-pronunciation-practice/' : '/',
   server: { headers: isolationHeaders },
   preview: { headers: isolationHeaders },
   worker: { format: 'es' },
@@ -68,4 +75,4 @@ export default defineConfig({
   // relative sidecar URLs and breaks them.
   optimizeDeps: { exclude: ['@huggingface/transformers', 'onnxruntime-web'] },
   build: { target: 'es2022' },
-});
+}));
