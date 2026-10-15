@@ -132,8 +132,12 @@ Inference runs in workers so a multi-hundred-megabyte model load never blocks th
 
 - `vite.config.ts` sets `Cross-Origin-Opener-Policy: same-origin` and
   `Cross-Origin-Embedder-Policy: credentialless`. The isolation enables
-  `SharedArrayBuffer`, and therefore multi-threaded WASM; `credentialless` rather than
-  `require-corp` is what keeps Hugging Face downloads working.
+  `SharedArrayBuffer`; `credentialless` rather than `require-corp` is what keeps
+  Hugging Face downloads working. `SharedArrayBuffer` is still required even though
+  both workers pin `numThreads` to 1 (see below) — onnxruntime-web 1.30 only ships one
+  wasm binary (`ort-wasm-simd-threaded.wasm`), and it's compiled with a shared
+  `WebAssembly.Memory`, which needs `SharedArrayBuffer` to instantiate at all,
+  independent of how many threads actually get used at runtime.
 - ONNX Runtime's WASM sidecars are served out of `node_modules` at `/ort/` in dev and
   copied into `dist/ort/` on build, keeping them same-origin and available offline.
   `vite build` also emits two ~26 MB `*.asyncify.wasm` assets: those are static
@@ -148,6 +152,14 @@ Inference runs in workers so a multi-hundred-megabyte model load never blocks th
   the rest of the worker's lifetime (`"previous call to 'initWasm()' failed"`) — so a
   doomed webgpu attempt must never be issued in the first place, rather than caught and
   retried after the fact.
+- Both workers pin `ort.env.wasm.numThreads` (`env.backends.onnx.wasm.numThreads` for
+  the ASR worker) to `1`. Above 1, Emscripten's pthread runtime spins up its own worker
+  pool to back the threads — a nested Worker-from-a-Worker, since this code already
+  runs inside one — and that silently hung forever in Firefox and Safari (no console
+  output, no rejection, regardless of execution provider) once the model had finished
+  downloading. ONNX Runtime documents `numThreads: 1` as spawning no worker thread at
+  all, which sidesteps the nested-worker path entirely rather than depending on
+  browser support for it.
 
 ## Licensing
 

@@ -11,6 +11,17 @@ import type { Device, Dtype } from '../types';
 
 // Models always come from the Hub; there is no /models/ directory to check first.
 env.allowLocalModels = false;
+// Left unset, this defaults to 0 ("system determined"), which in practice
+// means > 1 and makes Emscripten's pthread runtime spin up its own worker
+// pool -- a nested Worker-from-a-Worker, since this code already runs inside
+// one. That hung the TTS worker's onnxruntime-web session silently in
+// Firefox and Safari (see tts.worker.ts); pinning this to 1 avoids the same
+// latent failure here before anyone hits it on the ASR side.
+// Non-null: transformers.js populates `backends.onnx.wasm` as a side effect
+// of its own module init, which has already run by the time this executes
+// (the `env`/`pipeline` import above pulls it in). The type is optional only
+// because the declared shape is generic, not because it can be empty here.
+env.backends.onnx.wasm!.numThreads = 1;
 
 interface LoadParams {
   repo: string;

@@ -10,9 +10,14 @@ import type { Device } from '../types';
 // Served out of node_modules by the dev server and copied into dist on build,
 // so the runtime stays same-origin and works offline once cached.
 ort.env.wasm.wasmPaths = '/ort/';
-ort.env.wasm.numThreads = self.crossOriginIsolated
-  ? Math.min(4, navigator.hardwareConcurrency || 1)
-  : 1;
+// Pinned to 1 (ORT: "If set to 1, no worker thread will be spawned") rather
+// than scaled with crossOriginIsolated/hardwareConcurrency. Any value above 1
+// makes Emscripten's pthread runtime spin up its own worker pool — a nested
+// Worker-from-a-Worker, since this code already runs inside one — and that
+// silently hung forever in Firefox and Safari (no console output, no
+// rejection) regardless of execution provider. One short TTS inference
+// doesn't need the parallelism badly enough to risk it.
+ort.env.wasm.numThreads = 1;
 
 /**
  * Piper's own espeak-ng build, compiled to WASM. Using the exact phonemiser
