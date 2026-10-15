@@ -25,7 +25,7 @@ export function App() {
 
   // Picked per the benchmark data in catalog.ts: the most accurate option
   // that stays practical to download and run in-browser.
-  const defaultAsr = ASR_MODELS.find((m) => m.id === 'roest-wav2vec2-315m') ?? ASR_MODELS[0];
+  const defaultAsr = ASR_MODELS.find((m) => m.id === 'edda-v0.2') ?? ASR_MODELS[0];
   const [asrId, setAsrId] = useState(defaultAsr.id);
   const [dtype, setDtype] = useState<Dtype>(defaultAsr.defaultDtype);
   const [device, setDevice] = useState<Device>('webgpu');

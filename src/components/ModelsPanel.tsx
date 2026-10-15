@@ -85,9 +85,9 @@ export function ModelsPanel(props: ModelsPanelProps) {
             onChange={(event) => props.onDtype(event.target.value as Dtype)}
             disabled={props.busy}
           >
-            {DTYPES.map((dtype) => (
+            {DTYPES.filter((dtype) => asr.sizes[dtype] !== undefined).map((dtype) => (
               <option key={dtype} value={dtype}>
-                {dtype} — {formatBytes(asr.sizes[dtype])}
+                {dtype} — {formatBytes(asr.sizes[dtype]!)}
               </option>
             ))}
           </select>

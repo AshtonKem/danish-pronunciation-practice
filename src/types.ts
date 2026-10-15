@@ -1,6 +1,6 @@
 export type Device = 'webgpu' | 'wasm';
 
-/** Quantisations we expose; every Whisper repo in the catalog ships all four. */
+/** Quantisations we expose. Not every repo ships (or correctly supports) all four. */
 export type Dtype = 'fp32' | 'fp16' | 'q8' | 'q4';
 
 export interface AsrModelSpec {
@@ -14,8 +14,13 @@ export interface AsrModelSpec {
    * is to build the right transcribe() options.
    */
   kind: 'seq2seq' | 'ctc';
-  /** Approximate download size in bytes, keyed by quantisation. */
-  sizes: Record<Dtype, number>;
+  /**
+   * Approximate download size in bytes, keyed by quantisation. Partial: a
+   * model only offers the dtypes it actually has working files for (see
+   * `note` for why one might be missing — a bad quantisation, or a real
+   * conversion bug rather than a deliberate omission).
+   */
+  sizes: Partial<Record<Dtype, number>>;
   note: string;
   /** Default quantisation for this model; some don't hold up well below q8. */
   defaultDtype: Dtype;

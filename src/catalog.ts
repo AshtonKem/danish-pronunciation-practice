@@ -14,11 +14,12 @@ const RYEAI_LEADERBOARD = {
  * whisper-small and whisper-large-v3-turbo here as a warning against judging
  * a model by how well it handles one recording.
  *
- * `roest-wav2vec2-315m` is an actual Danish-specific model from that
- * ecosystem: see its own `note` and `benchmark.source` for how it differs
- * from everything else here (a different architecture, a different
- * evaluation, and a bug in its published conversion that this app works
- * around — none of that applies to the whisper-* entries).
+ * `edda-v0.2` and `roest-wav2vec2-315m` are actual Danish-specific models
+ * from that ecosystem: see each one's own `note` and `benchmark.source` for
+ * how it differs from everything else here (edda is this app's own ONNX
+ * conversion, unlike every other entry; roest's architecture, evaluation,
+ * and a bug in its published conversion are all specific to it) — none of
+ * that applies to the whisper-* entries.
  */
 export const ASR_MODELS: AsrModelSpec[] = [
   {
@@ -60,6 +61,29 @@ export const ASR_MODELS: AsrModelSpec[] = [
     defaultDtype: 'q4',
     benchmark: { wer: 28.43, cer: 16.35, source: RYEAI_LEADERBOARD },
     note: 'The most accurate stock Whisper size that stays practical in-browser; q4 on WebGPU is the best balance of size and speed.',
+  },
+  {
+    id: 'edda-v0.2',
+    label: 'Edda v0.2 (Danish, beam search)',
+    repo: 'AshtonKem/edda-v0.2-ONNX',
+    kind: 'seq2seq',
+    sizes: { fp32: 3_501_721_752, q8: 883_945_327 },
+    defaultDtype: 'q8',
+    benchmark: {
+      wer: 8.79,
+      cer: 4.1,
+      source: {
+        label: "the model's own card (mean of CoRaL conversation + read-aloud, Common Voice 17, FLEURS, FTSpeech)",
+        url: 'https://huggingface.co/danish-foundation-models/edda-v0.2',
+      },
+    },
+    note:
+      'Recommended. A Danish fine-tune of whisper-large-v3-turbo, converted to ONNX for this ' +
+      "app specifically (no community conversion existed) — see the README for how. Half Røst's " +
+      "WER, and open: Apache-2.0, not gated. fp16 and q4 aren't offered: fp16 hit a genuine " +
+      "ONNX bug in the merged decoder's control-flow graph (a type mismatch that survived " +
+      'converting before *and* after merging), and no reliable 4-bit tool was available during ' +
+      'conversion. q8 and fp32 were each verified end to end with an exact-match transcription.',
   },
   {
     id: 'roest-wav2vec2-315m',

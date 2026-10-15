@@ -58,25 +58,26 @@ larger recogniser reduces, but does not remove, this effect.
 
 | Role | Model | Notes |
 | --- | --- | --- |
-| ASR | `PierreMesure/roest-315m-onnx` | Danish-specific wav2vec2 CTC. Recommended — see below. |
+| ASR | `AshtonKem/edda-v0.2-ONNX` | Danish fine-tune of Whisper-large-v3-turbo. Recommended — see below. |
+| ASR | `PierreMesure/roest-315m-onnx` | Danish-specific wav2vec2 CTC. |
 | ASR | `onnx-community/whisper-{tiny,base,small,large-v3-turbo}` | Multilingual; Danish via `language: 'da'`. |
 | TTS | Piper `da_DK-talesyntese-medium` | 63 MB VITS voice, run directly on onnxruntime-web. |
 | TTS | System voice (`da-DK`) | No download; quality depends on what your OS has installed. |
 | Phonemes | espeak-ng via `piper_phonemize` | 19 MB. Needed for TTS *and* for phoneme-level scoring. |
 
-All ASR models offer selectable quantisation (q4/q8/fp16/fp32); see each model's `note`
-in `catalog.ts` for which one actually holds up (`roest-315m-onnx` degrades noticeably
-below q8, unlike the Whisper sizes).
+ASR models offer whichever quantisations are actually verified working; see each
+model's `note` in `catalog.ts` (`roest-315m-onnx` degrades noticeably below q8; `edda`
+doesn't ship fp16/q4 at all, see below).
 
 ### Why stock Whisper alone wasn't good enough, and what's used instead
 
 The [CoRaL Danish ASR leaderboard](https://huggingface.co/spaces/RyeAI/danish-asr-leaderboard)
-ranks Danish-specific fine-tunes far ahead of stock Whisper (its #2 model,
-`danish-foundation-models/edda-v0.2`, scores 8.8% WER against stock `whisper-large-v3`'s
-23.9%). Most aren't usable in this app, for three different reasons depending on the
-model:
+ranks Danish-specific fine-tunes far ahead of stock Whisper (its #2 model, `edda-v0.2`,
+scores 8.8% WER against stock `whisper-large-v3`'s 23.9%). Most of the leaderboard's
+top models still aren't usable in this app, for three different reasons depending on
+the model:
 
-- Most (`edda`, `roest-v2/v3`, `brage`, `saga`, `hviske-v3/v5/v5.1/v5.3/v6`, `danstral`,
+- Most (`roest-v2/v3`, `brage`, `saga`, `hviske-v3/v5/v5.1/v5.3/v6`, `danstral`,
   `milo-asr`) have no ONNX export published at all.
 - `syvai/hviske-v5-tiny` has one, and transformers.js 4.3.1 even ships native code for
   its `cohere_asr` architecture — but the repo is gated behind Hub authentication (this
@@ -89,37 +90,53 @@ model:
   networks needing a streaming label-loop decode). transformers.js does ship a
   `parakeet` module, but only the CTC variant (`ParakeetForCTC`) — not RNNT/TDT — so it
   doesn't cover these either.
+- `Harmonium/brage-v1` is gated behind Hub authentication *and* its published 8.34%
+  WER depends on a custom KenLM-fused decoder (`brage_decode.py`), not plain Whisper
+  generation — a vanilla ONNX conversion almost certainly wouldn't reproduce that
+  number even with access. Its license is Apache-2.0 plus CoRaL's Attachment A
+  use-restrictions (no voice cloning/impersonation, no demographic inference, etc.),
+  not AGPL; satisfying it means carrying that text, `LICENSE-CORAL`, and `NOTICE`
+  verbatim, not substituting a different license.
 
-**`PierreMesure/roest-315m-onnx`** is the exception: a community ONNX conversion of
+**`AshtonKem/edda-v0.2-ONNX`** doesn't have any of these problems: `edda-v0.2` is
+Apache-2.0, not gated, and its published 8.79% WER comes from plain beam search
+(`num_beams=5`, the default already baked into its `generation_config.json`) — no
+custom decoder dependency. It also just had no ONNX export, community or official, so
+this one is this app's own conversion from the original safetensors checkpoint, done
+with `optimum-cli export onnx` and `optimum.onnx.graph_transformations.merge_decoders`
+(the encoder/decoder had to be exported separately, then merged — a plain
+`optimum-cli export onnx` call doesn't do this automatically for every architecture).
+`q8` and `fp32` are both verified end to end with an exact-match transcription against
+a synthesised test sentence; `fp16` and `q4` aren't offered — `fp16` conversion hit a
+genuine ONNX type-inference bug in the merged decoder's control-flow (`If`) node (an
+`Add` op left with mismatched `float16`/`float32` operands, which persisted whether the
+two pre-merge decoder graphs were converted to fp16 before merging or the already-merged
+graph was converted after), and no reliable 4-bit weight-only quantisation tool was
+available in the conversion environment. See the model repo's own README for the full
+writeup.
+
+**`PierreMesure/roest-315m-onnx`** was the first Danish-specific model added here,
+before `edda` existed in this app: a community ONNX conversion of
 `CoRal-project/roest-wav2vec2-315m-v1`, a plain wav2vec2 CTC architecture transformers.js
 already supports natively, published with `library_name: transformers.js` and the exact
 file layout it expects. It's v1 — v2 and v3 exist and score better still on the
 leaderboard, but neither has a published ONNX export. Even v1 scores ~17% WER on its own
-card (CoRal read-aloud + Danish Common Voice 17), close to half of the best Whisper size
-here, and that tracked in this app's own testing on a synthesised sentence ("jeg vil
-gerne have en kopkafe" vs. Whisper-large-v3-turbo's considerably rougher output on the
-same audio).
-
-That repo's published conversion has a real bug, though: `tokenizer.json`'s
-`added_tokens` array is empty, so every special token id — including the CTC blank
-token — decodes as the literal string `"<unk>"` instead of being dropped, turning
-"jeg vil" into `"<unk>j<unk>eg vil<unk>"`. `tokenizer_config.json`'s
+card, close to double `edda`'s. Its published conversion also had a real bug:
+`tokenizer.json`'s `added_tokens` array is empty, so every special token id — including
+the CTC blank token — decoded as the literal string `"<unk>"` instead of being dropped,
+turning "jeg vil" into `"<unk>j<unk>eg vil<unk>"`. `tokenizer_config.json`'s
 `added_tokens_decoder` has the correct data; `asr.worker.ts` patches it into
 `tokenizer.json` in flight via `env.fetch` (the single choke point transformers.js
 calls for every file it fetches) rather than waiting on a fix to someone else's Hub
 repo. The patch is unconditional but checks first, so it's a no-op for every
-correctly-formed tokenizer (every Whisper repo here included).
+correctly-formed tokenizer (every other model here included).
 
 The leaderboard's `benchmark` scores in `catalog.ts` (mean WER/CER across CoRaL
 conversation + read-aloud, FTSpeech, Common Voice 17 da, and FLEURS da, dated
-2026-10-15) are what the Whisper sizes are judged against — not a single clean test
-sentence. Trust that gap more than your own quick test: `whisper-small` transcribes an
-easy synthesised sentence perfectly, yet scores 46.9% WER on the real benchmark.
-
-Converting one of the fully unexported options (`edda-v0.2` is apache-2.0 and plain
-Whisper architecture) to ONNX is possible but out of scope here — it needs a multi-GB
-download, an `optimum` export, and somewhere for the browser to fetch the result from,
-i.e. a Hub repo to push it to.
+2026-10-15, or a model's own card where noted) are what every size here is judged
+against — not a single clean test sentence. Trust that gap more than your own quick
+test: `whisper-small` transcribes an easy synthesised sentence perfectly, yet scores
+46.9% WER on the real benchmark.
 
 ### Managing downloads
 
