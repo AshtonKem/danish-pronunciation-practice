@@ -115,7 +115,7 @@ export function App() {
       setTtsState('loading');
       try {
         if (spec.engine === 'piper') {
-          await engines.loadVoice(spec.id, setProgress);
+          await engines.loadVoice(spec.id, device, setProgress);
         } else {
           // The system voice needs no model, but scoring still needs phonemes.
           await engines.preparePhonemiser(setProgress);
@@ -126,7 +126,7 @@ export function App() {
         throw caught;
       }
     });
-  }, [engines, run, ttsId]);
+  }, [device, engines, run, ttsId]);
 
   const speak = useCallback(() => {
     const spec = TTS_MODELS.find((m) => m.id === ttsId);

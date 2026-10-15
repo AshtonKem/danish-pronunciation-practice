@@ -43,6 +43,24 @@ export function ModelsPanel(props: ModelsPanelProps) {
         )}
       </header>
 
+      <label className="field field-wide">
+        <span>Backend (used for both the recogniser and the voice)</span>
+        <select
+          value={props.device}
+          onChange={(event) => props.onDevice(event.target.value as Device)}
+          disabled={props.busy}
+        >
+          <option value="webgpu" disabled={!props.webgpuAvailable}>
+            WebGPU
+          </option>
+          <option value="wasm">WASM (CPU)</option>
+        </select>
+      </label>
+      <p className="muted note">
+        If a model gets stuck loading on WebGPU, switch to WASM here and reload it — WASM is
+        slower but far more predictable across browsers.
+      </p>
+
       <div className="grid">
         <label className="field">
           <span>Speech recognition</span>
@@ -72,20 +90,6 @@ export function ModelsPanel(props: ModelsPanelProps) {
                 {dtype} — {formatBytes(asr.sizes[dtype])}
               </option>
             ))}
-          </select>
-        </label>
-
-        <label className="field">
-          <span>Backend</span>
-          <select
-            value={props.device}
-            onChange={(event) => props.onDevice(event.target.value as Device)}
-            disabled={props.busy}
-          >
-            <option value="webgpu" disabled={!props.webgpuAvailable}>
-              WebGPU
-            </option>
-            <option value="wasm">WASM (CPU)</option>
           </select>
         </label>
 

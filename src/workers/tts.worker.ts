@@ -44,8 +44,14 @@ interface Phonemiser {
 }
 
 let phonemiser: Phonemiser | null = null;
-let voice: { id: string; session: ort.InferenceSession; config: PiperConfig; device: Device } | null =
-  null;
+let voice: {
+  id: string;
+  /** The device the caller asked for; distinct from `device`, what actually got used. */
+  preferred: Device;
+  session: ort.InferenceSession;
+  config: PiperConfig;
+  device: Device;
+} | null = null;
 
 function piperSpec(id: string) {
   const spec = TTS_MODELS.find((m) => m.id === id);
@@ -181,12 +187,15 @@ async function supportsWebgpu(): Promise<boolean> {
 
 async function createSession(
   bytes: ArrayBuffer,
+  preferred: Device,
 ): Promise<{ session: ort.InferenceSession; device: Device }> {
-  const webgpu = await supportsWebgpu();
-  // One single call, not one attempt per device: passing both lets ORT try
-  // 'wasm' as an internal fallback within the same call if 'webgpu' fails,
-  // without us ever issuing a second top-level call that could hit the
-  // poisoned-wasm-init failure described above.
+  // An explicit 'wasm' choice skips the GPU probe and the webgpu EP entirely —
+  // the only way, from the UI, to route around a stuck or misbehaving WebGPU
+  // backend (shader compilation, adapter/device request) rather than waiting
+  // on it. 'webgpu' still probes for a real adapter first (see supportsWebgpu)
+  // and, when found, passes both providers in one call so ORT's own internal
+  // fallback has a safety net without us ever issuing a second top-level call.
+  const webgpu = preferred === 'webgpu' && (await supportsWebgpu());
   const executionProviders: Device[] = webgpu ? ['webgpu', 'wasm'] : ['wasm'];
 
   try {
@@ -207,8 +216,12 @@ serve({
     return { result: { language: engine.language } };
   },
 
-  async loadVoice({ id }: { id: string }, { progress }) {
-    if (voice?.id === id) return { result: { reused: true, device: voice.device } };
+  async loadVoice({ id, device: preferred }: { id: string; device: Device }, { progress }) {
+    // A device switch (e.g. falling back to WASM to route around a stuck
+    // WebGPU session) must reload even if the voice id hasn't changed.
+    if (voice?.id === id && voice.preferred === preferred) {
+      return { result: { reused: true, device: voice.device } };
+    }
 
     const spec = piperSpec(id).voice!;
     await ensurePhonemiser((data) => progress(data));
@@ -218,8 +231,8 @@ serve({
     await voice?.session.release();
     voice = null;
 
-    const { session, device } = await createSession(bytes);
-    voice = { id, session, config, device };
+    const { session, device } = await createSession(bytes, preferred);
+    voice = { id, preferred, session, config, device };
     return { result: { reused: false, device } };
   },
 

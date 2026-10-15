@@ -82,9 +82,10 @@ export class Engines {
 
   loadVoice(
     id: string,
+    device: Device,
     onProgress?: (progress: LoadProgress) => void,
   ): Promise<{ reused: boolean; device: Device }> {
-    return this.tts.call('loadVoice', { id }, { onProgress: this.forward(onProgress) });
+    return this.tts.call('loadVoice', { id, device }, { onProgress: this.forward(onProgress) });
   }
 
   speak(text: string): Promise<{ samples: Float32Array; sampleRate: number }> {
