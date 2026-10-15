@@ -204,5 +204,7 @@ Inference runs in workers so a multi-hundred-megabyte model load never blocks th
 
 ## Licensing
 
-espeak-ng (via `piper_phonemize`) is GPL-3.0-or-later and is fetched at runtime rather
-than bundled. Worth checking before redistributing this as a product.
+This project's own code is Apache-2.0 (see `LICENSE`). It downloads and runs several
+third-party models and runtimes at the user's own request, each under its own license —
+see the Models section above for which. None of that is vendored or distributed with
+this repo.

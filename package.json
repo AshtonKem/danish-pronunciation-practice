@@ -4,7 +4,7 @@
   "private": true,
   "type": "module",
   "description": "Practice Danish pronunciation in the browser with on-device TTS and ASR (WebGPU).",
-  "license": "MIT",
+  "license": "Apache-2.0",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit && vite build",
