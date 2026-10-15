@@ -404,6 +404,28 @@ button.link {
   font-size: 13px;
 }
 
+.word-retry {
+  border-top: 1px solid var(--border);
+  margin-top: 12px;
+  padding-top: 12px;
+}
+
+.word-retry-actions {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.word-retry-actions .meter {
+  flex: 1;
+  min-width: 80px;
+}
+
+.word-retry-result {
+  margin-top: 10px;
+}
+
 .badge {
   font-size: 11px;
   text-transform: uppercase;

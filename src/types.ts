@@ -82,3 +82,14 @@ export interface Evaluation {
   score: number;
   durationMs: number;
 }
+
+/**
+ * Result of re-recording a single word from the sentence result, keyed by
+ * that word's index so it only renders while the matching word is selected.
+ * Kept entirely separate from `Evaluation` — retrying one word must never
+ * touch, let alone clear, the full-sentence result it was retried from.
+ */
+export interface WordCheck {
+  index: number;
+  result: WordResult;
+}

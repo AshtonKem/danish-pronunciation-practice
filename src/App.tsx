@@ -6,10 +6,10 @@ import { PracticePanel } from './components/PracticePanel';
 import { ResultView } from './components/ResultView';
 import { Recorder, playSamples } from './lib/audio';
 import { Engines, type LoadProgress } from './lib/engines';
-import { evaluate, type PhonemeGroups } from './lib/evaluate';
+import { evaluate, evaluateWord, type PhonemeGroups } from './lib/evaluate';
 import { listStored, removeStored, storageUsage, type StoredItem } from './lib/modelStore';
 import { speakWithSystemVoice } from './lib/systemVoice';
-import type { Device, Dtype, Evaluation } from './types';
+import type { Device, Dtype, Evaluation, WordCheck } from './types';
 
 type EngineState = 'idle' | 'loading' | 'ready';
 
@@ -51,6 +51,13 @@ export function App() {
   const [level, setLevel] = useState(0);
   const [recordingUrl, setRecordingUrl] = useState<string | null>(null);
   const [evaluation, setEvaluation] = useState<Evaluation | null>(null);
+
+  // Retrying a single word from the result — kept fully separate from
+  // `evaluation`/`recording` above so it can run without disturbing them.
+  const wordRecorder = useRef<Recorder | null>(null);
+  const [wordRecordingIndex, setWordRecordingIndex] = useState<number | null>(null);
+  const [wordLevel, setWordLevel] = useState(0);
+  const [wordCheck, setWordCheck] = useState<WordCheck | null>(null);
 
   const [stored, setStored] = useState<StoredItem[]>([]);
   const [usage, setUsage] = useState<{ usage: number; quota: number } | null>(null);
@@ -148,18 +155,31 @@ export function App() {
     });
   }, [device, engines, run, ttsId]);
 
-  const speak = useCallback(() => {
-    const spec = TTS_MODELS.find((m) => m.id === ttsId);
-    if (!spec) return;
-    void run('Speaking…', async () => {
-      if (spec.engine === 'system') {
-        await speakWithSystemVoice(sentence);
-        return;
-      }
-      const { samples, sampleRate } = await engines.speak(sentence);
-      await playSamples(samples, sampleRate);
-    });
-  }, [engines, run, sentence, ttsId]);
+  const speakText = useCallback(
+    (text: string, label: string) => {
+      const spec = TTS_MODELS.find((m) => m.id === ttsId);
+      if (!spec) return;
+      void run(label, async () => {
+        if (spec.engine === 'system') {
+          await speakWithSystemVoice(text);
+          return;
+        }
+        const { samples, sampleRate } = await engines.speak(text);
+        await playSamples(samples, sampleRate);
+      });
+    },
+    [engines, run, ttsId],
+  );
+
+  const speak = useCallback(() => speakText(sentence, 'Speaking…'), [sentence, speakText]);
+
+  // Re-hear a single word from the result, in isolation — Piper synthesises
+  // whatever text it's given, so this is just speakText() with one word
+  // instead of the whole sentence.
+  const playWord = useCallback(
+    (word: string) => speakText(word, `Playing “${word}”…`),
+    [speakText],
+  );
 
   const check = useCallback(
     async (samples: Float32Array, durationMs: number) => {
@@ -204,6 +224,9 @@ export function App() {
       recorder.current = active;
       setRecording(true);
       setEvaluation(null);
+      // A fresh sentence attempt invalidates any retry of a word from the
+      // previous one — indices may no longer even point at the same words.
+      setWordCheck(null);
     });
   }, [check, recording, run]);
 
@@ -218,6 +241,70 @@ export function App() {
     frame = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(frame);
   }, [recording]);
+
+  const checkWord = useCallback(
+    async (index: number, target: string, samples: Float32Array) => {
+      await run(`Checking “${target}”…`, async () => {
+        const { text } = await engines.transcribe(samples);
+
+        let groups: (PhonemeGroups | null)[] = [null, null];
+        try {
+          ({ groups } = await engines.phonemize([target, text]));
+        } catch {
+          // Phonemes are an enhancement; fall back to word-level comparison.
+        }
+
+        const result = evaluateWord(target, text, groups[0] ?? null, groups[1] ?? null);
+        setWordCheck({ index, result });
+      });
+    },
+    [engines, run],
+  );
+
+  // Mirrors toggleRecord, scoped to one word: never touches `evaluation` or
+  // `recording`/`recorder`, so the full-sentence result stays on screen and
+  // the main Record button stays untouched throughout.
+  const toggleWordRecord = useCallback(
+    (index: number, target: string) => {
+      // Ignore a click for a different word while one is already recording —
+      // the UI disables this, but never stop/evaluate the wrong recording.
+      if (wordRecordingIndex !== null && wordRecordingIndex !== index) return;
+
+      if (wordRecordingIndex !== null) {
+        const active = wordRecorder.current;
+        wordRecorder.current = null;
+        setWordRecordingIndex(null);
+        setWordLevel(0);
+        if (!active) return;
+        void run('Processing audio…', async () => {
+          const result = await active.stop();
+          await checkWord(index, target, result.samples);
+        });
+        return;
+      }
+
+      void run('Starting microphone…', async () => {
+        const active = new Recorder();
+        await active.start();
+        wordRecorder.current = active;
+        setWordRecordingIndex(index);
+        setWordCheck(null);
+      });
+    },
+    [checkWord, run, wordRecordingIndex],
+  );
+
+  // Poll the input level only while recording a single word.
+  useEffect(() => {
+    if (wordRecordingIndex === null) return;
+    let frame = 0;
+    const tick = () => {
+      setWordLevel(wordRecorder.current?.level() ?? 0);
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, [wordRecordingIndex]);
 
   const deleteItem = useCallback(
     (item: StoredItem) => {
@@ -274,7 +361,7 @@ export function App() {
         recording={recording}
         level={level}
         canSpeak={ttsState === 'ready' || ttsSpec?.engine === 'system'}
-        canRecord={asrState === 'ready'}
+        canRecord={asrState === 'ready' && wordRecordingIndex === null}
         busy={busy}
         recordingUrl={recordingUrl}
         onSentence={setSentence}
@@ -316,7 +403,19 @@ export function App() {
         <p className="hint">Load a speech recogniser to enable recording.</p>
       )}
 
-      {evaluation && <ResultView evaluation={evaluation} />}
+      {evaluation && (
+        <ResultView
+          evaluation={evaluation}
+          canPlayWord={ttsState === 'ready' || ttsSpec?.engine === 'system'}
+          canRecordWord={asrState === 'ready' && !recording}
+          busy={busy}
+          wordRecordingIndex={wordRecordingIndex}
+          wordLevel={wordLevel}
+          wordCheck={wordCheck}
+          onPlayWord={playWord}
+          onToggleWordRecord={toggleWordRecord}
+        />
+      )}
 
       <footer className="app-foot muted">
         <p>

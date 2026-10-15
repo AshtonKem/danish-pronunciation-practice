@@ -63,6 +63,49 @@ function classifySubstitution(
   return { status: kept >= MISPRONOUNCED_FLOOR ? 'mispronounced' : 'wrong', phonemes };
 }
 
+/**
+ * Score a single retried word directly, rather than through `evaluate()`'s
+ * sentence-level alignment. That alignment deliberately turns a target word
+ * matched against a completely different spoken word into a separate
+ * extra+missing pair — the right call for a full sentence (see `evaluate`),
+ * but wrong here: reading just one of that pair back out would misreport a
+ * "wrong word" retry as merely "extra" or "missing".
+ */
+export function evaluateWord(
+  target: string,
+  transcript: string,
+  targetGroups: PhonemeGroups | null,
+  spokenGroups: PhonemeGroups | null,
+): WordResult {
+  const targetWord = tokenize(target)[0];
+  const spokenWord = tokenize(transcript)[0];
+
+  if (!targetWord) return { status: 'missing' };
+  if (!spokenWord) return { status: 'missing', target: targetWord.raw, targetPhonemes: targetGroups?.[0] };
+
+  const targetPhonemes = targetGroups?.[0];
+  const spokenPhonemes = spokenGroups?.[0];
+  const distance = normalizedDistance(targetWord.norm, spokenWord.norm);
+
+  // classifySubstitution assumes its caller already ruled out an exact text
+  // match (true of its only other caller, align()'s 'sub' step) — rule it
+  // out here too, rather than let a real match read as "mispronounced".
+  const { status, phonemes } =
+    distance === 0 ? { status: 'correct' as const, phonemes: undefined } : classifySubstitution(targetPhonemes, spokenPhonemes, distance);
+
+  return {
+    status,
+    target: targetWord.raw,
+    // The full transcript, not just its first word — if more came out than
+    // the one word asked for, that's worth showing even though only the
+    // first word's phonemes factor into the verdict above.
+    spoken: transcript.trim(),
+    targetPhonemes,
+    spokenPhonemes,
+    phonemes,
+  };
+}
+
 export function evaluate(
   targetText: string,
   transcript: string,

@@ -1,6 +1,6 @@
 import { useState } from 'react';
 
-import type { Evaluation, PhonemeOp, WordResult, WordStatus } from '../types';
+import type { Evaluation, PhonemeOp, WordCheck, WordResult, WordStatus } from '../types';
 
 const STATUS_LABEL: Record<WordStatus, string> = {
   correct: 'Correct',
@@ -30,7 +30,59 @@ function PhonemeTrack({ ops }: { ops: PhonemeOp[] }) {
   );
 }
 
-function WordDetail({ word }: { word: WordResult }) {
+/** The result of retrying this one word, shown under the retry controls. */
+function WordRetryResult({ result }: { result: WordResult }) {
+  return (
+    <div className="word-retry-result">
+      <div className="word-detail-head">
+        <span className="muted">Your retry:</span>
+        <span className={`badge badge-${result.status}`}>{STATUS_LABEL[result.status]}</span>
+      </div>
+      {result.status === 'wrong' && result.spoken && (
+        <p className="muted">
+          Heard <em>{result.spoken}</em>.
+        </p>
+      )}
+      {result.status === 'missing' && <p className="muted">Didn't catch anything that time.</p>}
+      {result.phonemes && result.phonemes.length > 0 && <PhonemeTrack ops={result.phonemes} />}
+    </div>
+  );
+}
+
+export interface WordDetailProps {
+  word: WordResult;
+  index: number;
+  canPlayWord: boolean;
+  canRecordWord: boolean;
+  busy: boolean;
+  /** Index of the word currently being recorded, or null if none is. */
+  wordRecordingIndex: number | null;
+  /** Input level while recording this word, 0–1. */
+  level: number;
+  /** Set only when it matches `index` — a retry of a different word, or none yet. */
+  check: WordCheck | null;
+  onPlayWord: (word: string) => void;
+  onToggleRecord: (index: number, target: string) => void;
+}
+
+function WordDetail({
+  word,
+  index,
+  canPlayWord,
+  canRecordWord,
+  busy,
+  wordRecordingIndex,
+  level,
+  check,
+  onPlayWord,
+  onToggleRecord,
+}: WordDetailProps) {
+  // 'extra' words have no target text — nothing to play back or retry against.
+  const target = word.target;
+  const recording = wordRecordingIndex === index;
+  // A *different* word is recording — never silently no-op a click, disable it.
+  const anotherWordRecording = wordRecordingIndex !== null && !recording;
+
   return (
     <div className="word-detail">
       <div className="word-detail-head">
@@ -53,11 +105,61 @@ function WordDetail({ word }: { word: WordResult }) {
           Target pronunciation: <code>/{word.targetPhonemes.join('')}/</code>
         </p>
       ) : null}
+
+      {target && (
+        <div className="word-retry">
+          <div className="word-retry-actions">
+            <button
+              type="button"
+              onClick={() => onPlayWord(target)}
+              disabled={!canPlayWord || busy || anotherWordRecording}
+            >
+              Listen
+            </button>
+            <button
+              type="button"
+              className={recording ? 'recording' : ''}
+              onClick={() => onToggleRecord(index, target)}
+              disabled={!canRecordWord || anotherWordRecording || (busy && !recording)}
+            >
+              {recording ? 'Stop & check' : 'Try this word'}
+            </button>
+            {recording && (
+              <div className="meter" aria-label="Input level">
+                <div className="meter-fill" style={{ width: `${Math.round(level * 100)}%` }} />
+              </div>
+            )}
+          </div>
+          {check?.index === index && <WordRetryResult result={check.result} />}
+        </div>
+      )}
     </div>
   );
 }
 
-export function ResultView({ evaluation }: { evaluation: Evaluation }) {
+export interface ResultViewProps {
+  evaluation: Evaluation;
+  canPlayWord: boolean;
+  canRecordWord: boolean;
+  busy: boolean;
+  wordRecordingIndex: number | null;
+  wordLevel: number;
+  wordCheck: WordCheck | null;
+  onPlayWord: (word: string) => void;
+  onToggleWordRecord: (index: number, target: string) => void;
+}
+
+export function ResultView({
+  evaluation,
+  canPlayWord,
+  canRecordWord,
+  busy,
+  wordRecordingIndex,
+  wordLevel,
+  wordCheck,
+  onPlayWord,
+  onToggleWordRecord,
+}: ResultViewProps) {
   const [selected, setSelected] = useState<number | null>(null);
   const percent = Math.round(evaluation.score * 100);
   const problems = evaluation.words.filter((word) => word.status !== 'correct');
@@ -98,7 +200,20 @@ export function ResultView({ evaluation }: { evaluation: Evaluation }) {
         <span className="muted">Transcribed as:</span> {evaluation.transcript || '(silence)'}
       </p>
 
-      {selected !== null && <WordDetail word={evaluation.words[selected]} />}
+      {selected !== null && (
+        <WordDetail
+          word={evaluation.words[selected]}
+          index={selected}
+          canPlayWord={canPlayWord}
+          canRecordWord={canRecordWord}
+          busy={busy}
+          wordRecordingIndex={wordRecordingIndex}
+          level={wordLevel}
+          check={wordCheck}
+          onPlayWord={onPlayWord}
+          onToggleRecord={onToggleWordRecord}
+        />
+      )}
 
       {selected === null &&
         (problems.length === 0 ? (
