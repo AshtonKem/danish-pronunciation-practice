@@ -19,8 +19,12 @@ const ORT_DIST = dirname(require_.resolve('onnxruntime-web/ort-wasm-simd-threade
  * sidecars same-origin also sidesteps the COEP restrictions below.
  */
 function serveOrtRuntime(): Plugin {
+  // ORT picks between four wasm "flavors" at runtime depending on what the
+  // browser supports (plain, .jsep for WebGPU, .jspi, and .asyncify as the
+  // fallback for browsers without WebAssembly JS Promise Integration) — which
+  // one it wants isn't known ahead of time, so all of them need to be served.
   const wanted = (name: string) =>
-    /^ort-wasm-simd-threaded(\.jsep)?\.(wasm|mjs)$/.test(name);
+    /^ort-wasm-simd-threaded(\.jsep|\.jspi|\.asyncify)?\.(wasm|mjs)$/.test(name);
 
   return {
     name: 'serve-ort-runtime',
