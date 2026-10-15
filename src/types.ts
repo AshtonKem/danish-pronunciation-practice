@@ -7,15 +7,24 @@ export interface AsrModelSpec {
   id: string;
   label: string;
   repo: string;
+  /**
+   * `seq2seq` (Whisper's encoder/decoder) accepts a source `language` and
+   * `task`; `ctc` (wav2vec2's single acoustic model + greedy decode) doesn't
+   * and logs a warning if given one, so the worker needs to know which this
+   * is to build the right transcribe() options.
+   */
+  kind: 'seq2seq' | 'ctc';
   /** Approximate download size in bytes, keyed by quantisation. */
   sizes: Record<Dtype, number>;
   note: string;
+  /** Default quantisation for this model; some don't hold up well below q8. */
+  defaultDtype: Dtype;
   /**
-   * Mean WER/CER on real Danish speech (conversation, read-aloud, FTSpeech,
-   * Common Voice, FLEURS), from the CoRaL-based community leaderboard. Not
-   * measured by this app — see the source link next to where this is used.
+   * Danish WER/CER this model has actually been measured at — not by this
+   * app, see `source`. Numbers from different entries aren't always the same
+   * evaluation (leaderboard vs. a model's own card); `source` says which.
    */
-  coral?: { wer: number; cer: number };
+  benchmark?: { wer: number; cer: number; source: { label: string; url: string } };
 }
 
 export interface TtsModelSpec {

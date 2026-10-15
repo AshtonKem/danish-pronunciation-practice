@@ -72,7 +72,7 @@ export function ModelsPanel(props: ModelsPanelProps) {
             {ASR_MODELS.map((model) => (
               <option key={model.id} value={model.id}>
                 {model.label}
-                {model.coral ? ` — Danish WER ${model.coral.wer.toFixed(1)}%` : ''}
+                {model.benchmark ? ` — Danish WER ${model.benchmark.wer.toFixed(1)}%` : ''}
               </option>
             ))}
           </select>
@@ -101,19 +101,14 @@ export function ModelsPanel(props: ModelsPanelProps) {
         </div>
       </div>
       <p className="muted note">{asr.note}</p>
-      {asr.coral && (
+      {asr.benchmark && (
         <p className="muted note">
-          Danish benchmark: {asr.coral.wer.toFixed(1)}% WER / {asr.coral.cer.toFixed(1)}% CER on{' '}
-          <a
-            href="https://huggingface.co/spaces/RyeAI/danish-asr-leaderboard"
-            target="_blank"
-            rel="noreferrer"
-          >
-            the CoRaL leaderboard
+          Danish benchmark: {asr.benchmark.wer.toFixed(1)}% WER / {asr.benchmark.cer.toFixed(1)}%
+          CER, per{' '}
+          <a href={asr.benchmark.source.url} target="_blank" rel="noreferrer">
+            {asr.benchmark.source.label}
           </a>
-          . None of that leaderboard's top Danish-specific models are usable here yet — they
-          either have no browser-runnable export, or use a format this app's pipeline doesn't
-          support.
+          .
         </p>
       )}
 

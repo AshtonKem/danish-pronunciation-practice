@@ -23,8 +23,43 @@ env.allowLocalModels = false;
 // because the declared shape is generic, not because it can be empty here.
 env.backends.onnx.wasm!.numThreads = 1;
 
+/**
+ * At least one community ONNX conversion used for the ASR catalog
+ * (PierreMesure/roest-315m-onnx) ships a tokenizer.json whose `added_tokens`
+ * array is empty, even though its special tokens — including the CTC blank
+ * id — are correctly listed in tokenizer_config.json's
+ * `added_tokens_decoder`. The practical effect: every one of those ids,
+ * blank included, decodes as the literal string "<unk>" instead of being
+ * dropped, so a transcript like "jeg vil" comes back "<unk>j<unk>eg
+ * vil<unk>". This isn't a transformers.js bug or a model-weights problem —
+ * it's an incomplete published artifact — so it's patched in flight instead
+ * of worked around with custom decode logic. Safe to apply unconditionally:
+ * it's a no-op whenever `added_tokens` is already populated correctly (every
+ * Whisper repo in the catalog).
+ */
+const realFetch = env.fetch;
+env.fetch = async (input, init) => {
+  const response = await realFetch(input, init);
+  if (!String(input).endsWith('/tokenizer.json')) return response;
+
+  const data = await response.json();
+  if (!Array.isArray(data.added_tokens) || data.added_tokens.length > 0) {
+    return new Response(JSON.stringify(data), { headers: response.headers });
+  }
+
+  const configUrl = String(input).replace(/tokenizer\.json$/, 'tokenizer_config.json');
+  const config = await (await realFetch(configUrl, init)).json();
+  const decoder = (config.added_tokens_decoder ?? {}) as Record<
+    string,
+    { content: string; single_word: boolean; lstrip: boolean; rstrip: boolean; normalized: boolean; special: boolean }
+  >;
+  data.added_tokens = Object.entries(decoder).map(([id, token]) => ({ id: Number(id), ...token }));
+  return new Response(JSON.stringify(data), { headers: response.headers });
+};
+
 interface LoadParams {
   repo: string;
+  kind: 'seq2seq' | 'ctc';
   dtype: Dtype;
   device: Device;
 }
@@ -33,7 +68,8 @@ interface TranscribeParams {
   samples: Float32Array;
 }
 
-let loaded: { key: string; pipe: AutomaticSpeechRecognitionPipeline } | null = null;
+let loaded: { key: string; kind: LoadParams['kind']; pipe: AutomaticSpeechRecognitionPipeline } | null =
+  null;
 
 const keyOf = ({ repo, dtype, device }: LoadParams) => `${repo}|${dtype}|${device}`;
 
@@ -51,22 +87,25 @@ serve({
       progress_callback: (info: ProgressInfo) => progress(info),
     })) as AutomaticSpeechRecognitionPipeline;
 
-    loaded = { key, pipe };
+    loaded = { key, kind: params.kind, pipe };
     return { result: { reused: false, device: params.device } };
   },
 
   async transcribe({ samples }: TranscribeParams) {
     if (!loaded) throw new Error('No ASR model is loaded');
 
-    const output = await loaded.pipe(samples, {
-      // Pinning the language stops Whisper from "helpfully" transcribing
-      // halting Danish as English, which would read as a wall of errors.
-      language: 'da',
-      task: 'transcribe',
-      return_timestamps: false,
-      // Practice sentences are short; one window avoids chunk-stitching artefacts.
-      chunk_length_s: 30,
-    });
+    // CTC models (wav2vec2) don't take a source language/task -- transformers.js
+    // only logs a warning if given one, but there's no reason to pass options
+    // that don't apply. Whisper needs `language` pinned, or it sometimes
+    // "helpfully" transcribes halting Danish as English, which reads as a
+    // wall of errors; `chunk_length_s` just avoids chunk-stitching artefacts
+    // on these short practice sentences, for the one model type that chunks.
+    const options =
+      loaded.kind === 'seq2seq'
+        ? { language: 'da', task: 'transcribe' as const, return_timestamps: false, chunk_length_s: 30 }
+        : {};
+
+    const output = await loaded.pipe(samples, options);
 
     const text = Array.isArray(output)
       ? output.map((part) => part.text).join(' ')

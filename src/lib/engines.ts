@@ -58,11 +58,16 @@ export class Engines {
 
   loadAsr(
     repo: string,
+    kind: 'seq2seq' | 'ctc',
     dtype: Dtype,
     device: Device,
     onProgress?: (progress: LoadProgress) => void,
   ): Promise<{ reused: boolean; device: Device }> {
-    return this.asr.call('load', { repo, dtype, device }, { onProgress: this.forward(onProgress) });
+    return this.asr.call(
+      'load',
+      { repo, kind, dtype, device },
+      { onProgress: this.forward(onProgress) },
+    );
   }
 
   transcribe(samples: Float32Array): Promise<{ text: string }> {

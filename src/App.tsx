@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 
-import { ASR_MODELS, DEFAULT_DTYPE, TTS_MODELS, formatBytes } from './catalog';
+import { ASR_MODELS, TTS_MODELS, formatBytes } from './catalog';
 import { ModelsPanel } from './components/ModelsPanel';
 import { PracticePanel } from './components/PracticePanel';
 import { ResultView } from './components/ResultView';
@@ -23,11 +23,11 @@ export function App() {
 
   const webgpuAvailable = useMemo(() => 'gpu' in navigator, []);
 
-  // Picked per the CoRaL leaderboard data in catalog.ts: the most accurate
-  // size that stays practical to download and run in-browser.
-  const defaultAsr = ASR_MODELS.find((m) => m.id === 'whisper-large-v3-turbo') ?? ASR_MODELS[0];
+  // Picked per the benchmark data in catalog.ts: the most accurate option
+  // that stays practical to download and run in-browser.
+  const defaultAsr = ASR_MODELS.find((m) => m.id === 'roest-wav2vec2-315m') ?? ASR_MODELS[0];
   const [asrId, setAsrId] = useState(defaultAsr.id);
-  const [dtype, setDtype] = useState<Dtype>(DEFAULT_DTYPE[defaultAsr.id]);
+  const [dtype, setDtype] = useState<Dtype>(defaultAsr.defaultDtype);
   const [device, setDevice] = useState<Device>('webgpu');
   const [ttsId, setTtsId] = useState(TTS_MODELS[0].id);
 
@@ -63,7 +63,7 @@ export function App() {
 
   // Picking a different model should reset the quantisation to one that suits it.
   useEffect(() => {
-    setDtype(DEFAULT_DTYPE[asrId] ?? 'q8');
+    setDtype(ASR_MODELS.find((m) => m.id === asrId)?.defaultDtype ?? 'q8');
     setAsrState('idle');
   }, [asrId]);
 
@@ -99,7 +99,7 @@ export function App() {
     void run(`Loading ${spec.label}…`, async () => {
       setAsrState('loading');
       try {
-        await engines.loadAsr(spec.repo, dtype, device, setProgress);
+        await engines.loadAsr(spec.repo, spec.kind, dtype, device, setProgress);
         setAsrState('ready');
       } catch (caught) {
         setAsrState('idle');

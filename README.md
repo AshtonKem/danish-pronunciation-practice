@@ -58,20 +58,25 @@ larger recogniser reduces, but does not remove, this effect.
 
 | Role | Model | Notes |
 | --- | --- | --- |
-| ASR | `onnx-community/whisper-{tiny,base,small,large-v3-turbo}` | Multilingual; Danish via `language: 'da'`. Selectable quantisation (q4/q8/fp16/fp32). |
+| ASR | `PierreMesure/roest-315m-onnx` | Danish-specific wav2vec2 CTC. Recommended — see below. |
+| ASR | `onnx-community/whisper-{tiny,base,small,large-v3-turbo}` | Multilingual; Danish via `language: 'da'`. |
 | TTS | Piper `da_DK-talesyntese-medium` | 63 MB VITS voice, run directly on onnxruntime-web. |
 | TTS | System voice (`da-DK`) | No download; quality depends on what your OS has installed. |
 | Phonemes | espeak-ng via `piper_phonemize` | 19 MB. Needed for TTS *and* for phoneme-level scoring. |
 
-### Why stock Whisper, not a Danish-tuned model
+All ASR models offer selectable quantisation (q4/q8/fp16/fp32); see each model's `note`
+in `catalog.ts` for which one actually holds up (`roest-315m-onnx` degrades noticeably
+below q8, unlike the Whisper sizes).
+
+### Why stock Whisper alone wasn't good enough, and what's used instead
 
 The [CoRaL Danish ASR leaderboard](https://huggingface.co/spaces/RyeAI/danish-asr-leaderboard)
 ranks Danish-specific fine-tunes far ahead of stock Whisper (its #2 model,
 `danish-foundation-models/edda-v0.2`, scores 8.8% WER against stock `whisper-large-v3`'s
-23.9%). None of them are usable in this app yet, for three different reasons depending
-on the model:
+23.9%). Most aren't usable in this app, for three different reasons depending on the
+model:
 
-- Most (`edda`, `roest`, `brage`, `saga`, `hviske-v3/v5/v5.1/v5.3/v6`, `danstral`,
+- Most (`edda`, `roest-v2/v3`, `brage`, `saga`, `hviske-v3/v5/v5.1/v5.3/v6`, `danstral`,
   `milo-asr`) have no ONNX export published at all.
 - `syvai/hviske-v5-tiny` has one, and transformers.js 4.3.1 even ships native code for
   its `cohere_asr` architecture — but the repo is gated behind Hub authentication (this
@@ -85,17 +90,36 @@ on the model:
   `parakeet` module, but only the CTC variant (`ParakeetForCTC`) — not RNNT/TDT — so it
   doesn't cover these either.
 
-So the choice here is model *size* among stock Whisper, not a Danish model. The `coral`
-scores in `catalog.ts` (mean WER/CER across CoRaL conversation + read-aloud, FTSpeech,
-Common Voice 17 da, and FLEURS da, from the leaderboard above, dated 2026-10-15) are
-what `whisper-large-v3-turbo` is picked as the default against — not a single clean
-test sentence. Trust that gap more than your own quick test: `whisper-small` transcribes
-an easy synthesised sentence perfectly, yet scores 46.9% WER on the real benchmark.
+**`PierreMesure/roest-315m-onnx`** is the exception: a community ONNX conversion of
+`CoRal-project/roest-wav2vec2-315m-v1`, a plain wav2vec2 CTC architecture transformers.js
+already supports natively, published with `library_name: transformers.js` and the exact
+file layout it expects. It's v1 — v2 and v3 exist and score better still on the
+leaderboard, but neither has a published ONNX export. Even v1 scores ~17% WER on its own
+card (CoRal read-aloud + Danish Common Voice 17), close to half of the best Whisper size
+here, and that tracked in this app's own testing on a synthesised sentence ("jeg vil
+gerne have en kopkafe" vs. Whisper-large-v3-turbo's considerably rougher output on the
+same audio).
 
-Converting one of the open, standard-architecture options (`edda-v0.2` is apache-2.0 and
-plain Whisper architecture, just unexported) to ONNX is possible but out of scope here —
-it needs a multi-GB download, an `optimum` export, and somewhere for the browser to fetch
-the result from, i.e. a Hub repo to push it to.
+That repo's published conversion has a real bug, though: `tokenizer.json`'s
+`added_tokens` array is empty, so every special token id — including the CTC blank
+token — decodes as the literal string `"<unk>"` instead of being dropped, turning
+"jeg vil" into `"<unk>j<unk>eg vil<unk>"`. `tokenizer_config.json`'s
+`added_tokens_decoder` has the correct data; `asr.worker.ts` patches it into
+`tokenizer.json` in flight via `env.fetch` (the single choke point transformers.js
+calls for every file it fetches) rather than waiting on a fix to someone else's Hub
+repo. The patch is unconditional but checks first, so it's a no-op for every
+correctly-formed tokenizer (every Whisper repo here included).
+
+The leaderboard's `benchmark` scores in `catalog.ts` (mean WER/CER across CoRaL
+conversation + read-aloud, FTSpeech, Common Voice 17 da, and FLEURS da, dated
+2026-10-15) are what the Whisper sizes are judged against — not a single clean test
+sentence. Trust that gap more than your own quick test: `whisper-small` transcribes an
+easy synthesised sentence perfectly, yet scores 46.9% WER on the real benchmark.
+
+Converting one of the fully unexported options (`edda-v0.2` is apache-2.0 and plain
+Whisper architecture) to ONNX is possible but out of scope here — it needs a multi-GB
+download, an `optimum` export, and somewhere for the browser to fetch the result from,
+i.e. a Hub repo to push it to.
 
 ### Managing downloads
 
@@ -122,7 +146,7 @@ src/
     engines.ts        typed facade over the workers
     rpc.ts            promise-per-message worker RPC
   workers/
-    asr.worker.ts     Whisper via transformers.js
+    asr.worker.ts     Whisper + wav2vec2 via transformers.js
     tts.worker.ts     Piper via onnxruntime-web + espeak-ng phonemiser
 ```
 
