@@ -17,6 +17,13 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function formatElapsed(ms: number): string {
+  const totalSeconds = Math.floor(ms / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return minutes > 0 ? `${minutes}m ${String(seconds).padStart(2, '0')}s` : `${seconds}s`;
+}
+
 export function App() {
   const engines = useMemo(() => new Engines(), []);
   const recorder = useRef<Recorder | null>(null);
@@ -35,6 +42,7 @@ export function App() {
   const [ttsState, setTtsState] = useState<EngineState>('idle');
   const [progress, setProgress] = useState<LoadProgress | null>(null);
   const [status, setStatus] = useState<string | null>(null);
+  const [elapsedMs, setElapsedMs] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -79,6 +87,7 @@ export function App() {
       setBusy(true);
       setError(null);
       setStatus(label);
+      setElapsedMs(0);
       try {
         await action();
       } catch (caught) {
@@ -92,6 +101,17 @@ export function App() {
     },
     [refreshStorage],
   );
+
+  // A byte-progress bar already says "working" for downloads; this is for
+  // the steps that don't have one — notably beam-search transcription on a
+  // single-threaded WASM decoder, which can run well past a minute with no
+  // other sign of life. Ticking seconds is enough to tell "slow" from "stuck".
+  useEffect(() => {
+    if (!status) return;
+    const startedAt = performance.now();
+    const id = setInterval(() => setElapsedMs(performance.now() - startedAt), 250);
+    return () => clearInterval(id);
+  }, [status]);
 
   const loadAsr = useCallback(() => {
     const spec = ASR_MODELS.find((m) => m.id === asrId);
@@ -268,7 +288,10 @@ export function App() {
             <p className="error">{error}</p>
           ) : (
             <>
-              <p>{status}</p>
+              <p>
+                {status}
+                {elapsedMs > 1500 && <span className="muted"> — {formatElapsed(elapsedMs)}</span>}
+              </p>
               {progress && progress.total > 0 && (
                 <>
                   <div className="score-bar">
