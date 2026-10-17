@@ -47,12 +47,28 @@ first visit so the newly-registered worker actually controls the load that follo
 subsequent visits don't need that.
 
 I verified every static piece of this (the build output resolves correctly under the
-base path, with no server headers at all, matching Pages exactly) but **not** the one
-dynamic piece that actually matters — whether the service worker achieves
-`window.crossOriginIsolated` in a real browser — since I had no browser available to
-test in. It's a well-established pattern, not something novel, but test the deployed
-site yourself before trusting it: load a model and confirm it actually works, rather
-than hanging the way it does without `SharedArrayBuffer`.
+base path, with no server headers at all, matching Pages exactly) but, having no
+browser available to test in, not the one dynamic piece that actually matters —
+whether the service worker achieves `window.crossOriginIsolated` in a real browser.
+It didn't, on iOS: a crash was reported right after a model loaded, on any model size,
+identically on WebGPU and WASM — consistent with `SharedArrayBuffer` never actually
+becoming available there, since the one dynamic piece I couldn't test turned out to be
+broken in a very specific, very avoidable way. The header value this first shipped
+with, `Cross-Origin-Embedder-Policy: credentialless`, has never been supported by
+Safari or any iOS browser (all WebKit), in any version — so `crossOriginIsolated`
+could never become true there regardless of how correctly the service worker itself
+ran. Fixed by switching to `require-corp`, which WebKit does support and which,
+contrary to this project's own original assumption, doesn't actually need Hugging
+Face's cooperation either (see "Two notes on the build" below for why). Both `vite.config.ts`
+and `public/coi-serviceworker.js` now agree on `require-corp`.
+
+Both the app (`src/lib/crossOriginIsolation.ts`, checked before either worker does
+anything else) and the UI (a banner above the Models panel) now say so explicitly if
+isolation isn't active, rather than let a missing `SharedArrayBuffer` surface as an
+unexplained crash — useful both for Safari/iOS specifically and for any other browser
+situation this hasn't been tested against. Load a model on the deployed site and
+confirm it actually works before trusting it regardless; this is better-reasoned than
+the first attempt, not a device actually tested on.
 
 Renamed the repo, or deploying under a different name? Update the hardcoded
 `'/danish-pronunciation-practice/'` in `vite.config.ts` to match.
@@ -205,18 +221,32 @@ Inference runs in workers so a multi-hundred-megabyte model load never blocks th
 ### Two notes on the build
 
 - `vite.config.ts` sets `Cross-Origin-Opener-Policy: same-origin` and
-  `Cross-Origin-Embedder-Policy: credentialless`. The isolation enables
-  `SharedArrayBuffer`; `credentialless` rather than `require-corp` is what keeps
-  Hugging Face downloads working. `SharedArrayBuffer` is still required even though
+  `Cross-Origin-Embedder-Policy: require-corp`. The isolation enables
+  `SharedArrayBuffer`, which `SharedArrayBuffer` is still required even though
   both workers pin `numThreads` to 1 (see below) — onnxruntime-web 1.30 only ships one
   wasm binary (`ort-wasm-simd-threaded.wasm`), and it's compiled with a shared
   `WebAssembly.Memory`, which needs `SharedArrayBuffer` to instantiate at all,
   independent of how many threads actually get used at runtime.
-- ONNX Runtime's WASM sidecars are served out of `node_modules` at `/ort/` in dev and
-  copied into `dist/ort/` on build, keeping them same-origin and available offline.
-  `vite build` also emits two ~26 MB `*.asyncify.wasm` assets: those are static
-  references inside ORT's own ESM bundles that `wasmPaths` overrides at runtime, so
-  they are dead weight in `dist` rather than something the app fetches.
+
+  This used to say `credentialless` instead of `require-corp` — wrongly: Safari and
+  every iOS browser (all WebKit) have never supported `credentialless`, in any
+  version, so `crossOriginIsolated` never became true there regardless of how
+  isolation was being set up, which is almost certainly why a crash was once reported
+  right after a model loaded on iOS, on any model size, identically on WebGPU and
+  WASM (see `src/lib/crossOriginIsolation.ts`, checked explicitly before either
+  worker does anything else). `require-corp` doesn't need Hugging Face's cooperation
+  either, despite what the original comment here assumed: a cross-origin `fetch()` in
+  the default `'cors'` mode that gets back a valid `Access-Control-Allow-Origin` —
+  which huggingface.co's resolve endpoints already send, reflecting whatever `Origin`
+  asked — satisfies `require-corp` on its own, no `Cross-Origin-Resource-Policy`
+  header needed from the far side at all.
+- ONNX Runtime's WASM sidecars are served out of `node_modules` at `/ort/` in dev (and
+  `<base>/ort/` in production, since a GitHub Pages project page doesn't serve from
+  the origin root — see the Deploying section above) and copied into `dist/ort/` on
+  build, keeping them same-origin and available offline. `vite build` also emits two
+  ~26 MB `*.asyncify.wasm` assets: those are static references inside ORT's own ESM
+  bundles that `wasmPaths` overrides at runtime, so they are dead weight in `dist`
+  rather than something the app fetches.
 - The TTS worker probes `navigator.gpu.requestAdapter()` itself before telling
   onnxruntime-web to use WebGPU, rather than trusting the capability flag the UI reads
   on the main thread (WebGPU support inside a dedicated Worker can lag behind

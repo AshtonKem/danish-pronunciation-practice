@@ -2,6 +2,7 @@
 import * as ort from 'onnxruntime-web/webgpu';
 
 import { TTS_MODELS } from '../catalog';
+import { requireCrossOriginIsolation } from '../lib/crossOriginIsolation';
 import { cachedFetch, type DownloadProgress } from '../lib/modelStore';
 import { splitWords, toPhonemeStrings, type PhonemizeItem } from '../lib/phonemes';
 import { serve } from '../lib/rpc';
@@ -227,6 +228,8 @@ serve({
   },
 
   async loadVoice({ id, device: preferred }: { id: string; device: Device }, { progress }) {
+    requireCrossOriginIsolation();
+
     // A device switch (e.g. falling back to WASM to route around a stuck
     // WebGPU session) must reload even if the voice id hasn't changed.
     if (voice?.id === id && voice.preferred === preferred) {

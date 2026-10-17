@@ -29,6 +29,11 @@ export function App() {
   const recorder = useRef<Recorder | null>(null);
 
   const webgpuAvailable = useMemo(() => 'gpu' in navigator, []);
+  // Models need SharedArrayBuffer, which the browser only grants to a
+  // cross-origin isolated page. Checked here too, not just inside the
+  // workers' own requireCrossOriginIsolation(), so this shows up before
+  // the user even tries to load anything.
+  const crossOriginIsolated = useMemo(() => window.crossOriginIsolated === true, []);
 
   // Picked per the benchmark data in catalog.ts: the most accurate option
   // that stays practical to download and run in-browser.
@@ -332,6 +337,17 @@ export function App() {
           run on your own machine — nothing is uploaded.
         </p>
       </header>
+
+      {!crossOriginIsolated && (
+        <section className="card status-card">
+          <p className="error">
+            This page isn't cross-origin isolated, so the browser won't grant it
+            SharedArrayBuffer — which models need to load at all. Try a hard reload; if that
+            doesn't help, this browser may not support the isolation workaround this site
+            relies on when it can't set its own response headers.
+          </p>
+        </section>
+      )}
 
       <ModelsPanel
         asrId={asrId}

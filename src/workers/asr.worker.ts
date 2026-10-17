@@ -6,6 +6,7 @@ import {
   type ProgressInfo,
 } from '@huggingface/transformers';
 
+import { requireCrossOriginIsolation } from '../lib/crossOriginIsolation';
 import { serve } from '../lib/rpc';
 import type { Device, Dtype } from '../types';
 
@@ -75,6 +76,8 @@ const keyOf = ({ repo, dtype, device }: LoadParams) => `${repo}|${dtype}|${devic
 
 serve({
   async load(params: LoadParams, { progress }) {
+    requireCrossOriginIsolation();
+
     const key = keyOf(params);
     if (loaded?.key === key) return { result: { reused: true, device: params.device } };
 

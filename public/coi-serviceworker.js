@@ -5,12 +5,19 @@
 // service worker's synthesized response is just as able to set as a real
 // server. See index.html for the registration/reload side of this.
 //
-// Only same-origin requests are touched. Cross-origin fetches (model weights
-// from huggingface.co) are passed through untouched: COEP's `credentialless`
-// mode, which this app declares, strips credentials from the request rather
-// than requiring the response to opt in via Cross-Origin-Resource-Policy, so
-// it needs no cooperation from those responses at all. Rewriting them would
-// only risk breaking range requests or caching for no benefit.
+// `require-corp`, not `credentialless`: Safari and every iOS browser (all
+// WebKit) have never supported `credentialless`, in any version, which means
+// crossOriginIsolated never becomes true there no matter how this is set up.
+// `require-corp` doesn't need huggingface.co's cooperation either: a
+// cross-origin fetch() in the default 'cors' mode that gets back a valid
+// Access-Control-Allow-Origin — which it already sends — satisfies
+// require-corp on its own, no Cross-Origin-Resource-Policy header needed
+// from the far side.
+//
+// Only same-origin requests are touched regardless; cross-origin ones are
+// passed through untouched, since rewriting them risks breaking range
+// requests or caching for no benefit — require-corp's requirement is already
+// met by the CORS response alone.
 
 self.addEventListener('install', () => self.skipWaiting());
 self.addEventListener('activate', (event) => event.waitUntil(self.clients.claim()));
@@ -24,7 +31,7 @@ self.addEventListener('fetch', (event) => {
       if (response.status !== 0 && response.type === 'opaque') return response;
       const headers = new Headers(response.headers);
       headers.set('Cross-Origin-Opener-Policy', 'same-origin');
-      headers.set('Cross-Origin-Embedder-Policy', 'credentialless');
+      headers.set('Cross-Origin-Embedder-Policy', 'require-corp');
       return new Response(response.body, {
         status: response.status,
         statusText: response.statusText,

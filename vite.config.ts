@@ -51,12 +51,23 @@ function serveOrtRuntime(): Plugin {
   };
 }
 
-// SharedArrayBuffer — and with it multi-threaded WASM inference — is only handed
-// out to cross-origin-isolated pages. `credentialless` keeps model downloads from
-// huggingface.co working, which plain `require-corp` would block.
+// SharedArrayBuffer -- and with it the WASM runtime onnxruntime-web requires
+// to instantiate at all -- is only handed out to cross-origin-isolated pages.
+// `require-corp`, not `credentialless`: Safari and every iOS browser (all
+// WebKit) have never supported `credentialless`, in any version, so setting
+// it there means crossOriginIsolated never becomes true at all -- the likely
+// cause of a crash reported right after a model loaded on iOS, on any model
+// size, identically on WebGPU and WASM (see requireCrossOriginIsolation()).
+// `require-corp` doesn't need Hugging Face's cooperation either: a
+// cross-origin fetch() in the (default) 'cors' mode that gets back a valid
+// Access-Control-Allow-Origin -- which huggingface.co's resolve endpoints
+// already send, reflecting whatever Origin asked -- satisfies require-corp
+// on its own, no Cross-Origin-Resource-Policy header needed from the far
+// side at all. The assumption that require-corp would block those downloads
+// was simply wrong.
 const isolationHeaders = {
   'Cross-Origin-Opener-Policy': 'same-origin',
-  'Cross-Origin-Embedder-Policy': 'credentialless',
+  'Cross-Origin-Embedder-Policy': 'require-corp',
 };
 
 export default defineConfig(({ command, isPreview }) => ({
