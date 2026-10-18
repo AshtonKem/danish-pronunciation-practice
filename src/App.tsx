@@ -103,6 +103,12 @@ export function App() {
       setError(null);
       setStatus(label);
       setElapsedMs(0);
+      // Cleared here, not just in `finally` below: that only clears the
+      // *previous* run's files once it ends, which depends on nothing else
+      // having gone wrong. Clearing again at the start of every new run
+      // guarantees a clean slate regardless of how the last one ended, so a
+      // new load's files are never shown alongside an old one's leftovers.
+      setProgress(null);
       try {
         await action();
       } catch (caught) {
