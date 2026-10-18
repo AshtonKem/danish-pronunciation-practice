@@ -2,11 +2,22 @@ import type { PhonemeGroups } from './evaluate';
 import { WorkerClient } from './rpc';
 import type { Device, Dtype } from '../types';
 
-export interface LoadProgress {
+export interface FileProgress {
   label: string;
   loaded: number;
   total: number;
 }
+
+/**
+ * One row per file involved in a load, keyed by filename. A model load can
+ * span several files downloading concurrently (an encoder and decoder, or
+ * Supertonic's four sessions plus config/tokenizer/voice-style); reporting
+ * each raw event as a single overwritten value made the displayed filename
+ * and percentage flicker between them as their progress interleaved. This
+ * keeps every file's own latest progress, Docker-pull-style, so each can be
+ * shown in place rather than fighting over one slot.
+ */
+export type LoadProgress = Map<string, FileProgress>;
 
 /** transformers.js progress events, narrowed to the fields we display. */
 interface HubProgress {
@@ -28,7 +39,7 @@ function basename(path: string): string {
   return withoutQuery.slice(withoutQuery.lastIndexOf('/') + 1) || withoutQuery;
 }
 
-function toLoadProgress(data: unknown): LoadProgress | null {
+function toFileProgress(data: unknown): FileProgress | null {
   const event = data as HubProgress & AssetProgress;
   if (!event || typeof event !== 'object') return null;
   if (event.status && event.status !== 'progress') return null;
@@ -49,10 +60,19 @@ export class Engines {
     new Worker(new URL('../workers/tts.worker.ts', import.meta.url), { type: 'module' }),
   );
 
+  /**
+   * One fresh map per call -- the caller gets a clean slate each time it
+   * loads something, not progress accumulated across unrelated loads.
+   * Cloned before each callback so a consumer holding the previous snapshot
+   * (e.g. React state) sees a new reference and re-renders.
+   */
   private forward(onProgress?: (progress: LoadProgress) => void) {
+    const files: LoadProgress = new Map();
     return (data: unknown) => {
-      const progress = toLoadProgress(data);
-      if (progress) onProgress?.(progress);
+      const file = toFileProgress(data);
+      if (!file) return;
+      files.set(file.label, file);
+      onProgress?.(new Map(files));
     };
   }
 

@@ -375,7 +375,7 @@ export function App() {
         </section>
       )}
 
-      {(status || progress || error) && (
+      {(status || (progress && progress.size > 0) || error) && (
         <section className="card status-card">
           {error ? (
             <p className="error">{error}</p>
@@ -385,20 +385,29 @@ export function App() {
                 {status}
                 {elapsedMs > 1500 && <span className="muted"> — {formatElapsed(elapsedMs)}</span>}
               </p>
-              {progress && progress.total > 0 && (
-                <>
-                  <div className="score-bar">
-                    <div
-                      className="score-fill"
-                      data-tier="mid"
-                      style={{ width: `${Math.round((progress.loaded / progress.total) * 100)}%` }}
-                    />
-                  </div>
-                  <p className="muted">
-                    {progress.label} — {formatBytes(progress.loaded)} /{' '}
-                    {formatBytes(progress.total)}
-                  </p>
-                </>
+              {progress && progress.size > 0 && (
+                <ul className="file-progress">
+                  {[...progress.values()].map((file) => {
+                    const done = file.total > 0 && file.loaded >= file.total;
+                    const percent =
+                      file.total > 0 ? Math.round((file.loaded / file.total) * 100) : 0;
+                    return (
+                      <li key={file.label} className={done ? 'file-done' : ''}>
+                        <div className="score-bar">
+                          <div
+                            className="score-fill"
+                            data-tier="mid"
+                            style={{ width: `${percent}%` }}
+                          />
+                        </div>
+                        <p className="muted">
+                          {done ? '✓ ' : ''}
+                          {file.label} — {formatBytes(file.loaded)} / {formatBytes(file.total)}
+                        </p>
+                      </li>
+                    );
+                  })}
+                </ul>
               )}
             </>
           )}

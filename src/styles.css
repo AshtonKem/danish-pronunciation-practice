@@ -602,6 +602,43 @@ button.link {
   margin-bottom: 0;
 }
 
+.file-progress {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.file-progress li {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  transition: opacity 400ms ease;
+}
+
+.file-progress li p {
+  margin: 0;
+  font-size: 12px;
+}
+
+/* .score-bar normally sizes itself via `flex: 1` in a flex *row* (its only
+   other use, in the result score display); this <li> is a flex *column*,
+   where that would size height instead, so pin the width explicitly. */
+.file-progress .score-bar {
+  flex: none;
+  width: 100%;
+  height: 6px;
+}
+
+/* Finished files stay listed, Docker-pull-style, rather than disappearing
+   mid-list while others are still downloading -- just faded down so the eye
+   goes to what's still active. */
+.file-progress li.file-done {
+  opacity: 0.45;
+}
+
 .app-foot {
   font-size: 12px;
   border-top: 1px solid var(--border);
