@@ -525,16 +525,19 @@ serve({
 
       await releaseLoadedTts();
 
-      // All 4 sessions share one device choice -- mixing GPU/CPU across them
-      // would work (sessions are independent) but isn't worth the complexity
-      // for a consistent, predictable result.
-      const [textEncoderResult, durationPredictorResult, vectorEstimatorResult, vocoderResult] =
-        await Promise.all([
-          createSession(textEncoderBytes, preferred),
-          createSession(durationPredictorBytes, preferred),
-          createSession(vectorEstimatorBytes, preferred),
-          createSession(vocoderBytes, preferred),
-        ]);
+      // One at a time, not Promise.all: onnxruntime-web's WebGPU backend is a
+      // single global registration slot (set when a session starts creating,
+      // cleared once it finishes) -- a second session.create() call with the
+      // webgpu EP starting before the first one's finished throws "another
+      // WebGPU EP inference session is being created." Piper never hits this
+      // (it only ever creates one session); Supertonic's four must be
+      // strictly sequential. All 4 sharing one device choice is deliberate
+      // too: mixing GPU/CPU across them would work (sessions are
+      // independent) but isn't worth the complexity for a predictable result.
+      const textEncoderResult = await createSession(textEncoderBytes, preferred);
+      const durationPredictorResult = await createSession(durationPredictorBytes, preferred);
+      const vectorEstimatorResult = await createSession(vectorEstimatorBytes, preferred);
+      const vocoderResult = await createSession(vocoderBytes, preferred);
 
       const cfgs = JSON.parse(new TextDecoder().decode(configBytes)) as SupertonicConfig;
       const indexer = JSON.parse(new TextDecoder().decode(tokenizerBytes)) as UnicodeIndexer;
