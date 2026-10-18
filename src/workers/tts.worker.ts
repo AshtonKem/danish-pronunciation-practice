@@ -54,19 +54,72 @@ interface Phonemiser {
   language: string;
 }
 
+/**
+ * Supertone's own config shape (`onnx/tts.json`) — model hyperparameters,
+ * not a standard HF config.json. Only the fields the inference algorithm
+ * below actually reads.
+ */
+interface SupertonicConfig {
+  ae: { sample_rate: number; base_chunk_size: number };
+  ttl: { chunk_compress_factor: number; latent_dim: number };
+}
+
+interface SupertonicVoiceStyle {
+  ttl: ort.Tensor;
+  dp: ort.Tensor;
+}
+
+interface SupertonicSessions {
+  textEncoder: ort.InferenceSession;
+  durationPredictor: ort.InferenceSession;
+  vectorEstimator: ort.InferenceSession;
+  vocoder: ort.InferenceSession;
+}
+
 let phonemiser: Phonemiser | null = null;
-let voice: {
-  id: string;
-  /** The device the caller asked for; distinct from `device`, what actually got used. */
-  preferred: Device;
-  session: ort.InferenceSession;
-  config: PiperConfig;
-  device: Device;
-} | null = null;
+type LoadedTts =
+  | {
+      kind: 'piper';
+      id: string;
+      /** The device the caller asked for; distinct from `device`, what actually got used. */
+      preferred: Device;
+      session: ort.InferenceSession;
+      config: PiperConfig;
+      device: Device;
+    }
+  | {
+      kind: 'supertonic';
+      id: string;
+      preferred: Device;
+      sessions: SupertonicSessions;
+      cfgs: SupertonicConfig;
+      indexer: UnicodeIndexer;
+      style: SupertonicVoiceStyle;
+      totalStep: number;
+      speed: number;
+      device: Device;
+    };
+let loadedTts: LoadedTts | null = null;
+
+async function releaseLoadedTts(): Promise<void> {
+  if (!loadedTts) return;
+  if (loadedTts.kind === 'piper') {
+    await loadedTts.session.release();
+  } else {
+    await Promise.all(Object.values(loadedTts.sessions).map((s) => s.release()));
+  }
+  loadedTts = null;
+}
 
 function piperSpec(id: string) {
   const spec = TTS_MODELS.find((m) => m.id === id);
   if (!spec?.voice) throw new Error(`Not a downloadable voice: ${id}`);
+  return spec;
+}
+
+function supertonicSpec(id: string) {
+  const spec = TTS_MODELS.find((m) => m.id === id);
+  if (!spec?.supertonic) throw new Error(`Not a downloadable voice: ${id}`);
   return spec;
 }
 
@@ -221,6 +274,224 @@ async function createSession(
   }
 }
 
+/**
+ * Ported directly from Supertone's own reference implementation
+ * (github.com/supertone-inc/supertonic, web/helper.js) — this is the exact
+ * official algorithm, not a reverse-engineered guess from the config shape;
+ * verified against the real models in Node before porting (duration scales
+ * sensibly with text length, voice styles produce measurably different
+ * output, waveform envelopes show speech-shaped energy bursts, not noise).
+ */
+const SUPERTONIC_LANGS = [
+  'en', 'ko', 'ja', 'ar', 'bg', 'cs', 'da', 'de', 'el', 'es', 'et', 'fi', 'fr',
+  'hi', 'hr', 'hu', 'id', 'it', 'lt', 'lv', 'nl', 'pl', 'pt', 'ro', 'ru', 'sk',
+  'sl', 'sv', 'tr', 'uk', 'vi', 'na',
+];
+
+/** Flat codepoint→id lookup table (65536 entries, one per BMP codepoint). */
+type UnicodeIndexer = number[];
+
+function supertonicPreprocessText(text: string, lang: string): string {
+  text = text.normalize('NFKD');
+  // Wide-range emoji blocks.
+  const emojiPattern =
+    /[\u{1F600}-\u{1F64F}\u{1F300}-\u{1F5FF}\u{1F680}-\u{1F6FF}\u{1F700}-\u{1F77F}\u{1F780}-\u{1F7FF}\u{1F800}-\u{1F8FF}\u{1F900}-\u{1F9FF}\u{1FA00}-\u{1FA6F}\u{1FA70}-\u{1FAFF}\u{2600}-\u{26FF}\u{2700}-\u{27BF}\u{1F1E6}-\u{1F1FF}]+/gu;
+  text = text.replace(emojiPattern, '');
+  const replacements: Record<string, string> = {
+    '–': '-', '‑': '-', '—': '-', '_': ' ',
+    '“': '"', '”': '"', '‘': "'", '’': "'",
+    '´': "'", '`': "'", '[': ' ', ']': ' ', '|': ' ', '/': ' ', '#': ' ', '→': ' ', '←': ' ',
+  };
+  for (const [from, to] of Object.entries(replacements)) text = text.replaceAll(from, to);
+  text = text.replace(/[♥☆♡©\\]/g, '');
+  const exprReplacements: Record<string, string> = {
+    '@': ' at ', 'e.g.,': 'for example, ', 'i.e.,': 'that is, ',
+  };
+  for (const [from, to] of Object.entries(exprReplacements)) text = text.replaceAll(from, to);
+  text = text
+    .replace(/ ,/g, ',').replace(/ \./g, '.').replace(/ !/g, '!')
+    .replace(/ \?/g, '?').replace(/ ;/g, ';').replace(/ :/g, ':').replace(/ '/g, "'");
+  while (text.includes('""')) text = text.replace('""', '"');
+  while (text.includes("''")) text = text.replace("''", "'");
+  while (text.includes('``')) text = text.replace('``', '`');
+  text = text.replace(/\s+/g, ' ').trim();
+  if (!/[.!?;:,'")\]}…。」』】〉》›»]$/.test(text)) text += '.';
+  if (!SUPERTONIC_LANGS.includes(lang)) {
+    throw new Error(`Invalid language for Supertonic: ${lang}. Available: ${SUPERTONIC_LANGS.join(', ')}`);
+  }
+  return `<${lang}>${text}</${lang}>`;
+}
+
+function lengthToMask(lengths: number[], maxLen: number): number[][][] {
+  return lengths.map((len) => {
+    const row = new Array<number>(maxLen).fill(0);
+    for (let j = 0; j < Math.min(len, maxLen); j++) row[j] = 1;
+    return [row];
+  });
+}
+
+function supertonicTokenize(
+  textList: string[],
+  langList: string[],
+  indexer: UnicodeIndexer,
+): { textIds: number[][]; textMask: number[][][] } {
+  const processed = textList.map((text, i) => supertonicPreprocessText(text, langList[i]));
+  const lengths = processed.map((text) => text.length);
+  const maxLen = Math.max(...lengths);
+  const textIds = processed.map((text) => {
+    const row = new Array<number>(maxLen).fill(0);
+    for (let j = 0; j < text.length; j++) {
+      const codePoint = text.codePointAt(j)!;
+      row[j] = codePoint < indexer.length ? indexer[codePoint] : -1;
+    }
+    return row;
+  });
+  return { textIds, textMask: lengthToMask(lengths, maxLen) };
+}
+
+/** Standard-normal noise for the flow-matching denoiser's starting point. */
+function boxMullerSample(): number {
+  const u1 = Math.max(0.0001, Math.random());
+  const u2 = Math.random();
+  return Math.sqrt(-2 * Math.log(u1)) * Math.cos(2 * Math.PI * u2);
+}
+
+function sampleNoisyLatent(
+  durations: number[],
+  sampleRate: number,
+  baseChunkSize: number,
+  chunkCompress: number,
+  latentDim: number,
+): { xt: number[][][]; latentMask: number[][][] } {
+  const bsz = durations.length;
+  const maxDur = Math.max(...durations);
+  const wavLenMax = Math.floor(maxDur * sampleRate);
+  const wavLengths = durations.map((d) => Math.floor(d * sampleRate));
+  const chunkSize = baseChunkSize * chunkCompress;
+  const latentLen = Math.floor((wavLenMax + chunkSize - 1) / chunkSize);
+  const latentDimVal = latentDim * chunkCompress;
+
+  const xt: number[][][] = [];
+  for (let b = 0; b < bsz; b++) {
+    const batch: number[][] = [];
+    for (let d = 0; d < latentDimVal; d++) {
+      const row: number[] = [];
+      for (let t = 0; t < latentLen; t++) row.push(boxMullerSample());
+      batch.push(row);
+    }
+    xt.push(batch);
+  }
+
+  const latentLengths = wavLengths.map((len) => Math.floor((len + chunkSize - 1) / chunkSize));
+  const latentMask = lengthToMask(latentLengths, latentLen);
+  for (let b = 0; b < bsz; b++) {
+    for (let d = 0; d < latentDimVal; d++) {
+      for (let t = 0; t < latentLen; t++) xt[b][d][t] *= latentMask[b][0][t];
+    }
+  }
+  return { xt, latentMask };
+}
+
+/**
+ * One text → one waveform, end to end: duration prediction, text encoding,
+ * the iterative flow-matching denoise loop, then vocoding. Single-sentence
+ * only (the official implementation's batching isn't needed here).
+ */
+async function supertonicInfer(
+  sessions: SupertonicSessions,
+  cfgs: SupertonicConfig,
+  indexer: UnicodeIndexer,
+  text: string,
+  lang: string,
+  style: SupertonicVoiceStyle,
+  totalStep: number,
+  speed: number,
+): Promise<{ wav: Float32Array; durationSeconds: number }> {
+  const { textIds, textMask } = supertonicTokenize([text], [lang], indexer);
+
+  const textIdsTensor = new ort.Tensor(
+    'int64',
+    BigInt64Array.from(textIds.flat(), BigInt),
+    [1, textIds[0].length],
+  );
+  const textMaskTensor = new ort.Tensor(
+    'float32',
+    Float32Array.from(textMask.flat(2)),
+    [1, 1, textMask[0][0].length],
+  );
+
+  const dpOutputs = await sessions.durationPredictor.run({
+    text_ids: textIdsTensor,
+    style_dp: style.dp,
+    text_mask: textMaskTensor,
+  });
+  const duration = (dpOutputs.duration.data as Float32Array)[0] / speed;
+
+  const textEncOutputs = await sessions.textEncoder.run({
+    text_ids: textIdsTensor,
+    style_ttl: style.ttl,
+    text_mask: textMaskTensor,
+  });
+  const textEmb = textEncOutputs.text_emb;
+
+  let { xt, latentMask } = sampleNoisyLatent(
+    [duration],
+    cfgs.ae.sample_rate,
+    cfgs.ae.base_chunk_size,
+    cfgs.ttl.chunk_compress_factor,
+    cfgs.ttl.latent_dim,
+  );
+  const latentMaskTensor = new ort.Tensor(
+    'float32',
+    Float32Array.from(latentMask.flat(2)),
+    [1, 1, latentMask[0][0].length],
+  );
+  const totalStepTensor = new ort.Tensor('float32', Float32Array.from([totalStep]), [1]);
+
+  for (let step = 0; step < totalStep; step++) {
+    const currentStepTensor = new ort.Tensor('float32', Float32Array.from([step]), [1]);
+    const xtTensor = new ort.Tensor(
+      'float32',
+      Float32Array.from(xt.flat(2)),
+      [1, xt[0].length, xt[0][0].length],
+    );
+
+    const vectorEstOutputs = await sessions.vectorEstimator.run({
+      noisy_latent: xtTensor,
+      text_emb: textEmb,
+      style_ttl: style.ttl,
+      latent_mask: latentMaskTensor,
+      text_mask: textMaskTensor,
+      current_step: currentStepTensor,
+      total_step: totalStepTensor,
+    });
+
+    const denoised = vectorEstOutputs.denoised_latent.data as Float32Array;
+    const latentDim = xt[0].length;
+    const latentLen = xt[0][0].length;
+    xt = [];
+    let idx = 0;
+    const batch: number[][] = [];
+    for (let d = 0; d < latentDim; d++) {
+      const row: number[] = [];
+      for (let t = 0; t < latentLen; t++) row.push(denoised[idx++]);
+      batch.push(row);
+    }
+    xt.push(batch);
+  }
+
+  const finalXtTensor = new ort.Tensor(
+    'float32',
+    Float32Array.from(xt.flat(2)),
+    [1, xt[0].length, xt[0][0].length],
+  );
+  const vocoderOutputs = await sessions.vocoder.run({ latent: finalXtTensor });
+  const wav = vocoderOutputs.wav_tts.data as Float32Array;
+
+  const wavLen = Math.floor(cfgs.ae.sample_rate * duration);
+  return { wav: wav.slice(0, wavLen), durationSeconds: duration };
+}
+
 serve({
   async prepare(_: unknown, { progress }) {
     const engine = await ensurePhonemiser((data) => progress(data));
@@ -232,8 +503,77 @@ serve({
 
     // A device switch (e.g. falling back to WASM to route around a stuck
     // WebGPU session) must reload even if the voice id hasn't changed.
-    if (voice?.id === id && voice.preferred === preferred) {
-      return { result: { reused: true, device: voice.device } };
+    if (loadedTts?.id === id && loadedTts.preferred === preferred) {
+      return { result: { reused: true, device: loadedTts.device } };
+    }
+
+    const ttsSpec = TTS_MODELS.find((m) => m.id === id);
+    if (ttsSpec?.engine === 'supertonic') {
+      const spec = supertonicSpec(id).supertonic!;
+      await ensurePhonemiser((data) => progress(data));
+
+      const [textEncoderBytes, durationPredictorBytes, vectorEstimatorBytes, vocoderBytes, configBytes, tokenizerBytes, styleBytes] =
+        await Promise.all([
+          cachedFetch(spec.textEncoder, progress),
+          cachedFetch(spec.durationPredictor, progress),
+          cachedFetch(spec.vectorEstimator, progress),
+          cachedFetch(spec.vocoder, progress),
+          cachedFetch(spec.config, progress),
+          cachedFetch(spec.tokenizer, progress),
+          cachedFetch(spec.voiceStyle, progress),
+        ]);
+
+      await releaseLoadedTts();
+
+      // All 4 sessions share one device choice -- mixing GPU/CPU across them
+      // would work (sessions are independent) but isn't worth the complexity
+      // for a consistent, predictable result.
+      const [textEncoderResult, durationPredictorResult, vectorEstimatorResult, vocoderResult] =
+        await Promise.all([
+          createSession(textEncoderBytes, preferred),
+          createSession(durationPredictorBytes, preferred),
+          createSession(vectorEstimatorBytes, preferred),
+          createSession(vocoderBytes, preferred),
+        ]);
+
+      const cfgs = JSON.parse(new TextDecoder().decode(configBytes)) as SupertonicConfig;
+      const indexer = JSON.parse(new TextDecoder().decode(tokenizerBytes)) as UnicodeIndexer;
+      const voiceStyle = JSON.parse(new TextDecoder().decode(styleBytes)) as {
+        style_ttl: { data: unknown; dims: number[] };
+        style_dp: { data: unknown; dims: number[] };
+      };
+      const style: SupertonicVoiceStyle = {
+        ttl: new ort.Tensor(
+          'float32',
+          Float32Array.from((voiceStyle.style_ttl.data as number[]).flat(Infinity) as number[]),
+          voiceStyle.style_ttl.dims,
+        ),
+        dp: new ort.Tensor(
+          'float32',
+          Float32Array.from((voiceStyle.style_dp.data as number[]).flat(Infinity) as number[]),
+          voiceStyle.style_dp.dims,
+        ),
+      };
+
+      const device = textEncoderResult.device;
+      loadedTts = {
+        kind: 'supertonic',
+        id,
+        preferred,
+        sessions: {
+          textEncoder: textEncoderResult.session,
+          durationPredictor: durationPredictorResult.session,
+          vectorEstimator: vectorEstimatorResult.session,
+          vocoder: vocoderResult.session,
+        },
+        cfgs,
+        indexer,
+        style,
+        totalStep: spec.totalStep,
+        speed: spec.speed,
+        device,
+      };
+      return { result: { reused: false, device } };
     }
 
     const spec = piperSpec(id).voice!;
@@ -241,11 +581,10 @@ serve({
     const config = await fetchConfig(spec.config);
     const bytes = await cachedFetch(spec.model, (data) => progress(data));
 
-    await voice?.session.release();
-    voice = null;
+    await releaseLoadedTts();
 
     const { session, device } = await createSession(bytes, preferred);
-    voice = { id, preferred, session, config, device };
+    loadedTts = { kind: 'piper', id, preferred, session, config, device };
     return { result: { reused: false, device } };
   },
 
@@ -264,9 +603,29 @@ serve({
   },
 
   async speak({ text }: { text: string }) {
-    if (!voice) throw new Error('No voice is loaded');
-    const { config, session } = voice;
+    if (!loadedTts) throw new Error('No voice is loaded');
 
+    if (loadedTts.kind === 'supertonic') {
+      const { sessions, cfgs, indexer, style, totalStep, speed } = loadedTts;
+      const { wav, durationSeconds } = await supertonicInfer(
+        sessions,
+        cfgs,
+        indexer,
+        text,
+        'da',
+        style,
+        totalStep,
+        speed,
+      );
+      if (durationSeconds <= 0 || wav.length === 0) throw new Error('Nothing to speak');
+      const samples = Float32Array.from(wav);
+      return {
+        result: { samples, sampleRate: cfgs.ae.sample_rate },
+        transfer: [samples.buffer],
+      };
+    }
+
+    const { config, session } = loadedTts;
     const [item] = await runPhonemiser([text], config.espeak.voice);
     const ids = item.phoneme_ids ?? [];
     if (ids.length === 0) throw new Error('Nothing to speak');

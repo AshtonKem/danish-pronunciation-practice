@@ -18,7 +18,7 @@ npm run dev          # http://localhost:5173
 Then, in the app:
 
 1. **Models** → pick a recogniser (start with *Whisper small*) and click **Load recogniser**.
-2. **Models** → click **Load voice** to fetch the Danish Piper voice + phonemiser.
+2. **Models** → click **Load voice** to fetch the default Danish voice + phonemiser.
 3. **Practise** → type a sentence, **Listen** to it, then **Record** and say it back.
 
 Chrome or Edge is required for WebGPU. Without it the app falls back to WASM on the
@@ -110,6 +110,7 @@ larger recogniser reduces, but does not remove, this effect.
 | ASR | `AshtonKem/edda-v0.2-ONNX` | Danish fine-tune of Whisper-large-v3-turbo. Recommended — see below. |
 | ASR | `PierreMesure/roest-315m-onnx` | Danish-specific wav2vec2 CTC. |
 | ASR | `onnx-community/whisper-{tiny,base,small,large-v3-turbo}` | Multilingual; Danish via `language: 'da'`. |
+| TTS | `Supertone/supertonic-3` | Flow-matching TTS, genuinely multilingual including Danish. Recommended — see below. |
 | TTS | Piper `da_DK-talesyntese-medium` | 63 MB VITS voice, run directly on onnxruntime-web. |
 | TTS | System voice (`da-DK`) | No download; quality depends on what your OS has installed. |
 | Phonemes | espeak-ng via `piper_phonemize` | 19 MB. Needed for TTS *and* for phoneme-level scoring. |
@@ -117,6 +118,54 @@ larger recogniser reduces, but does not remove, this effect.
 ASR models offer whichever quantisations are actually verified working; see each
 model's `note` in `catalog.ts` (`roest-315m-onnx` degrades noticeably below q8; `edda`
 doesn't ship fp16/q4 at all, see below).
+
+### Supertonic 3: a better voice than Piper, without transformers.js
+
+Piper's VITS voice works but sounds noticeably robotic next to more modern TTS. The
+search for something better covered three candidates, and two were dead ends worth
+recording so they aren't re-investigated the same way twice:
+
+- `syvai/plapre-nano(-v2)` is an LLaMA-360M backbone generating discrete audio tokens
+  for a *separate*, multi-stage neural codec (Kanade: WavLM-based feature extraction,
+  transformer encoders, an FSQ quantizer, an AdaLN-conditioned mel decoder, a postnet,
+  then a HiFT vocoder) — three models, none with a published ONNX export, speaker
+  conditioning via a continuous embedding injected as a soft prompt (which
+  transformers.js's generation API doesn't support at all, so even a from-scratch
+  export would still need a hand-written generation loop). Out of scope.
+- `nicolajreck/csm-1b-danish-tts` (Sesame's CSM architecture) at least has its codec
+  half solved: it uses Mimi, which transformers.js already implements natively and
+  which already has a published ONNX export (`onnx-community/kyutai-mimi-ONNX`). The
+  other half doesn't: `optimum`'s exporter has zero registered support for the `csm`
+  architecture at all, so the backbone + depth-decoder would need fully manual ONNX
+  tracing of an architecture with no existing export to learn from. Out of scope.
+- **`Supertone/supertonic-3`** has neither problem: the ONNX is already published
+  (no conversion needed, ~380 MB across `text_encoder`/`duration_predictor`/
+  `vector_estimator`/`vocoder`), not gated, genuinely supports Danish (one of 31
+  languages), and — unlike the other two — Supertone publishes an official web
+  reference implementation (`github.com/supertone-inc/supertonic`, `web/helper.js`)
+  using `onnxruntime-web` directly. transformers.js does ship a `supertonic` module,
+  but it was built against an earlier, differently-shaped release (it expects
+  `text_encoder` to output `durations` directly; the published repo factors that into
+  its own `duration_predictor` model, among other renamed fields) — so this app runs
+  the four ONNX sessions directly, the same way it already does for Piper, porting
+  the official reference algorithm (text preprocessing with language tags, duration
+  prediction, a short iterative flow-matching denoise loop, then vocoding) rather than
+  reverse-engineering it from the config shape.
+
+  Verified before shipping, not just reasoned about: ran the exact ported TypeScript
+  (extracted from `tts.worker.ts` and executed standalone in Node against the real
+  downloaded models, not a hand-copied approximation of it) and confirmed sensible,
+  non-degenerate output — duration scales with text length, different voice presets
+  produce measurably different output, the waveform's amplitude envelope shows
+  speech-shaped energy bursts rather than noise, and the *deterministic* parts
+  (predicted duration, sample count) match exactly between independent runs, while the
+  final waveform's exact amplitude varies slightly run to run — expected for a flow-
+  matching model, which starts from fresh random noise each time, not a sign of a bug.
+
+  One voice preset (`F1`) is wired up for now; the model ships ten
+  (`voice_styles/{F,M}{1-5}.json`, precomputed tensors — no reference-audio embedding
+  extraction needed, unlike CSM/plapre), but this app doesn't expose choosing between
+  them yet.
 
 ### Why stock Whisper alone wasn't good enough, and what's used instead
 
@@ -194,8 +243,9 @@ delete button, plus total browser storage use. Weights are large, and the browse
 otherwise hold on to them indefinitely.
 
 Downloads live in two Cache Storage buckets: `transformers-cache` (written by
-transformers.js) and `danish-speech-assets` (the Piper voice and phonemiser). Deleting
-an entry also drops the in-memory session, so the next use re-downloads it.
+transformers.js) and `danish-speech-assets` (everything this app fetches itself:
+Supertonic, Piper, and the phonemiser). Deleting an entry also drops the in-memory
+session, so the next use re-downloads it.
 
 ## Layout
 

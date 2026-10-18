@@ -146,7 +146,7 @@ export function App() {
     void run(`Loading ${spec.label}…`, async () => {
       setTtsState('loading');
       try {
-        if (spec.engine === 'piper') {
+        if (spec.engine === 'piper' || spec.engine === 'supertonic') {
           await engines.loadVoice(spec.id, device, setProgress);
         } else {
           // The system voice needs no model, but scoring still needs phonemes.

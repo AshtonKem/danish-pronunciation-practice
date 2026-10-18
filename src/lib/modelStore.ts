@@ -1,6 +1,6 @@
 import { ASR_MODELS, TTS_MODELS } from '../catalog';
 
-/** Our own downloads: Piper voices and the espeak-ng phonemiser. */
+/** Our own downloads: Supertonic, Piper voices, and the espeak-ng phonemiser. */
 export const ASSET_CACHE = 'danish-speech-assets';
 /** Written by transformers.js; `env.cacheKey` defaults to this. */
 export const TRANSFORMERS_CACHE = 'transformers-cache';
@@ -25,6 +25,7 @@ interface Grouping {
 
 const ASR_BY_REPO = new Map(ASR_MODELS.map((m) => [m.repo, m]));
 const PIPER_VOICES = TTS_MODELS.filter((m) => m.voice);
+const SUPERTONIC_VOICES = TTS_MODELS.filter((m) => m.supertonic);
 
 /**
  * Decide which listed item a cached URL belongs to. Returning a group per model
@@ -39,8 +40,13 @@ function groupFor(rawUrl: string): Grouping {
     return { key: `other:${rawUrl}`, label: rawUrl, kind: 'runtime' };
   }
 
-  const voice = PIPER_VOICES.find((m) => rawUrl === m.voice!.model || rawUrl === m.voice!.config);
-  if (voice) return { key: `tts:${voice.id}`, label: voice.label, kind: 'tts' };
+  const piperVoice = PIPER_VOICES.find((m) => rawUrl === m.voice!.model || rawUrl === m.voice!.config);
+  if (piperVoice) return { key: `tts:${piperVoice.id}`, label: piperVoice.label, kind: 'tts' };
+
+  const supertonicVoice = SUPERTONIC_VOICES.find((m) =>
+    Object.values(m.supertonic!).some((value) => value === rawUrl),
+  );
+  if (supertonicVoice) return { key: `tts:${supertonicVoice.id}`, label: supertonicVoice.label, kind: 'tts' };
 
   if (/piper[-_]phonemize|piper-wasm/.test(rawUrl)) {
     return { key: 'phonemiser', label: 'espeak-ng phonemiser (Piper)', kind: 'phonemiser' };

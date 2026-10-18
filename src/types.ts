@@ -35,8 +35,14 @@ export interface AsrModelSpec {
 export interface TtsModelSpec {
   id: string;
   label: string;
-  /** `piper` downloads a VITS voice; `system` uses the OS voices via Web Speech. */
-  engine: 'piper' | 'system';
+  /**
+   * `piper` downloads a VITS voice; `system` uses the OS voices via Web
+   * Speech; `supertonic` downloads Supertone's flow-matching TTS (4 ONNX
+   * models run directly, not through transformers.js — its own exported
+   * graphs don't match that library's `supertonic` module, which was built
+   * against an earlier, differently-shaped release).
+   */
+  engine: 'piper' | 'system' | 'supertonic';
   note: string;
   /** Present for `piper` voices only. */
   voice?: {
@@ -44,6 +50,23 @@ export interface TtsModelSpec {
     language: string;
     model: string;
     config: string;
+    bytes: number;
+  };
+  /** Present for `supertonic` voices only. */
+  supertonic?: {
+    textEncoder: string;
+    durationPredictor: string;
+    vectorEstimator: string;
+    vocoder: string;
+    /** Model hyperparameters (sample rate, latent sizing) — not a standard HF config.json. */
+    config: string;
+    /** Flat codepoint→id lookup table (65536 entries) — not a standard tokenizer.json. */
+    tokenizer: string;
+    /** One precomputed voice preset; picked once, not user-selectable yet. */
+    voiceStyle: string;
+    /** Denoising steps and speed the reference implementation defaults to. */
+    totalStep: number;
+    speed: number;
     bytes: number;
   };
 }

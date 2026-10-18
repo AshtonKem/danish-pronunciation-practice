@@ -112,8 +112,33 @@ export const ASR_MODELS: AsrModelSpec[] = [
 
 const PIPER_BASE =
   'https://huggingface.co/rhasspy/piper-voices/resolve/main/da/da_DK/talesyntese/medium';
+const SUPERTONIC_BASE = 'https://huggingface.co/Supertone/supertonic-3/resolve/main';
 
 export const TTS_MODELS: TtsModelSpec[] = [
+  {
+    id: 'supertonic-3',
+    label: 'Supertonic 3 (Danish)',
+    engine: 'supertonic',
+    note:
+      'Recommended. A flow-matching TTS model, multilingual with genuine Danish support — ' +
+      "noticeably smoother than Piper's VITS voice. ~380 MB across 4 ONNX models, run directly " +
+      "(not through transformers.js — the published graphs don't match that library's own " +
+      "supertonic module, built against an earlier, differently-shaped release). One voice " +
+      "preset (F1) for now; the model ships ten, but this app doesn't expose picking between " +
+      'them yet.',
+    supertonic: {
+      textEncoder: `${SUPERTONIC_BASE}/onnx/text_encoder.onnx`,
+      durationPredictor: `${SUPERTONIC_BASE}/onnx/duration_predictor.onnx`,
+      vectorEstimator: `${SUPERTONIC_BASE}/onnx/vector_estimator.onnx`,
+      vocoder: `${SUPERTONIC_BASE}/onnx/vocoder.onnx`,
+      config: `${SUPERTONIC_BASE}/onnx/tts.json`,
+      tokenizer: `${SUPERTONIC_BASE}/onnx/unicode_indexer.json`,
+      voiceStyle: `${SUPERTONIC_BASE}/voice_styles/F1.json`,
+      totalStep: 8,
+      speed: 1.05,
+      bytes: 398_653_248,
+    },
+  },
   {
     id: 'piper-da-talesyntese-medium',
     label: 'Piper — da_DK talesyntese (medium)',
