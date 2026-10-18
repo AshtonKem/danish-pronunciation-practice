@@ -4,6 +4,7 @@ import { ASR_MODELS, TTS_MODELS, formatBytes } from './catalog';
 import { ModelsPanel } from './components/ModelsPanel';
 import { PracticePanel } from './components/PracticePanel';
 import { ResultView } from './components/ResultView';
+import { SetupBar } from './components/SetupBar';
 import { Recorder, playSamples } from './lib/audio';
 import { Engines, type LoadProgress } from './lib/engines';
 import { evaluate, evaluateWord, type PhonemeGroups } from './lib/evaluate';
@@ -27,6 +28,8 @@ function formatElapsed(ms: number): string {
 export function App() {
   const engines = useMemo(() => new Engines(), []);
   const recorder = useRef<Recorder | null>(null);
+
+  const [tab, setTab] = useState<'practice' | 'advanced'>('practice');
 
   const webgpuAvailable = useMemo(() => 'gpu' in navigator, []);
   // Models need SharedArrayBuffer, which the browser only grants to a
@@ -326,6 +329,13 @@ export function App() {
     [engines, run],
   );
 
+  // Shared between SetupBar and the Advanced tab's ModelsPanel -- picking a
+  // voice invalidates whichever one was previously loaded either way.
+  const selectTtsId = useCallback((id: string) => {
+    setTtsId(id);
+    setTtsState('idle');
+  }, []);
+
   const ttsSpec = TTS_MODELS.find((m) => m.id === ttsId);
 
   return (
@@ -336,6 +346,22 @@ export function App() {
           Type a Danish sentence, hear it, say it back, and see which sounds came out wrong. Models
           run on your own machine — nothing is uploaded.
         </p>
+        <nav className="tabs">
+          <button
+            type="button"
+            className={tab === 'practice' ? 'tab-active' : ''}
+            onClick={() => setTab('practice')}
+          >
+            Practice
+          </button>
+          <button
+            type="button"
+            className={tab === 'advanced' ? 'tab-active' : ''}
+            onClick={() => setTab('advanced')}
+          >
+            Advanced
+          </button>
+        </nav>
       </header>
 
       {!crossOriginIsolated && (
@@ -348,42 +374,6 @@ export function App() {
           </p>
         </section>
       )}
-
-      <ModelsPanel
-        asrId={asrId}
-        dtype={dtype}
-        device={device}
-        ttsId={ttsId}
-        webgpuAvailable={webgpuAvailable}
-        asrState={asrState}
-        ttsState={ttsState}
-        stored={stored}
-        usage={usage}
-        busy={busy}
-        onAsrId={setAsrId}
-        onDtype={setDtype}
-        onDevice={setDevice}
-        onTtsId={(id) => {
-          setTtsId(id);
-          setTtsState('idle');
-        }}
-        onLoadAsr={loadAsr}
-        onLoadTts={loadTts}
-        onDelete={deleteItem}
-      />
-
-      <PracticePanel
-        sentence={sentence}
-        recording={recording}
-        level={level}
-        canSpeak={ttsState === 'ready' || ttsSpec?.engine === 'system'}
-        canRecord={asrState === 'ready' && wordRecordingIndex === null}
-        busy={busy}
-        recordingUrl={recordingUrl}
-        onSentence={setSentence}
-        onSpeak={speak}
-        onToggleRecord={toggleRecord}
-      />
 
       {(status || progress || error) && (
         <section className="card status-card">
@@ -415,32 +405,79 @@ export function App() {
         </section>
       )}
 
-      {asrState !== 'ready' && !busy && (
-        <p className="hint">Load a speech recogniser to enable recording.</p>
-      )}
+      {tab === 'practice' ? (
+        <>
+          <SetupBar
+            asrId={asrId}
+            ttsId={ttsId}
+            asrState={asrState}
+            ttsState={ttsState}
+            busy={busy}
+            onAsrId={setAsrId}
+            onTtsId={selectTtsId}
+            onLoadAsr={loadAsr}
+            onLoadTts={loadTts}
+          />
 
-      {evaluation && (
-        <ResultView
-          evaluation={evaluation}
-          canPlayWord={ttsState === 'ready' || ttsSpec?.engine === 'system'}
-          canRecordWord={asrState === 'ready' && !recording}
+          <PracticePanel
+            sentence={sentence}
+            recording={recording}
+            level={level}
+            canSpeak={ttsState === 'ready' || ttsSpec?.engine === 'system'}
+            canRecord={asrState === 'ready' && wordRecordingIndex === null}
+            busy={busy}
+            recordingUrl={recordingUrl}
+            onSentence={setSentence}
+            onSpeak={speak}
+            onToggleRecord={toggleRecord}
+          />
+
+          {asrState !== 'ready' && !busy && (
+            <p className="hint">Load a speech recogniser to enable recording.</p>
+          )}
+
+          {evaluation && (
+            <ResultView
+              evaluation={evaluation}
+              canPlayWord={ttsState === 'ready' || ttsSpec?.engine === 'system'}
+              canRecordWord={asrState === 'ready' && !recording}
+              busy={busy}
+              wordRecordingIndex={wordRecordingIndex}
+              wordLevel={wordLevel}
+              wordCheck={wordCheck}
+              onPlayWord={playWord}
+              onToggleWordRecord={toggleWordRecord}
+            />
+          )}
+
+          <footer className="app-foot muted">
+            <p>
+              Recognition isn't perfect, so treat a high score as good evidence of correct
+              pronunciation — not proof.
+            </p>
+          </footer>
+        </>
+      ) : (
+        <ModelsPanel
+          asrId={asrId}
+          dtype={dtype}
+          device={device}
+          ttsId={ttsId}
+          webgpuAvailable={webgpuAvailable}
+          asrState={asrState}
+          ttsState={ttsState}
+          stored={stored}
+          usage={usage}
           busy={busy}
-          wordRecordingIndex={wordRecordingIndex}
-          wordLevel={wordLevel}
-          wordCheck={wordCheck}
-          onPlayWord={playWord}
-          onToggleWordRecord={toggleWordRecord}
+          onAsrId={setAsrId}
+          onDtype={setDtype}
+          onDevice={setDevice}
+          onTtsId={selectTtsId}
+          onLoadAsr={loadAsr}
+          onLoadTts={loadTts}
+          onDelete={deleteItem}
         />
       )}
-
-      <footer className="app-foot muted">
-        <p>
-          Whisper runs through transformers.js; the Danish voice is Piper{' '}
-          <code>da_DK-talesyntese-medium</code>, phonemised with espeak-ng. Because Whisper is a
-          language model it will sometimes "correct" what you said, so a perfect score is evidence
-          of good pronunciation, not proof.
-        </p>
-      </footer>
     </main>
   );
 }
