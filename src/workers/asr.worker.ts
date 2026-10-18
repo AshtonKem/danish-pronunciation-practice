@@ -7,6 +7,7 @@ import {
 } from '@huggingface/transformers';
 
 import { requireCrossOriginIsolation } from '../lib/crossOriginIsolation';
+import { isIosWebkit } from '../lib/platform';
 import { serve } from '../lib/rpc';
 import type { Device, Dtype } from '../types';
 
@@ -78,20 +79,26 @@ serve({
   async load(params: LoadParams, { progress }) {
     requireCrossOriginIsolation();
 
-    const key = keyOf(params);
-    if (loaded?.key === key) return { result: { reused: true, device: params.device } };
+    // See platform.ts: onnxruntime-web's webgpu EP is a memory hazard on
+    // iOS WebKit regardless of what the UI asked for, so it's clamped here
+    // rather than trusted from the caller.
+    const device = params.device === 'webgpu' && isIosWebkit() ? 'wasm' : params.device;
+    const clamped = { ...params, device };
+
+    const key = keyOf(clamped);
+    if (loaded?.key === key) return { result: { reused: true, device } };
 
     await loaded?.pipe.dispose();
     loaded = null;
 
     const pipe = (await pipeline('automatic-speech-recognition', params.repo, {
       dtype: params.dtype,
-      device: params.device,
+      device,
       progress_callback: (info: ProgressInfo) => progress(info),
     })) as AutomaticSpeechRecognitionPipeline;
 
     loaded = { key, kind: params.kind, pipe };
-    return { result: { reused: false, device: params.device } };
+    return { result: { reused: false, device } };
   },
 
   async transcribe({ samples }: TranscribeParams) {

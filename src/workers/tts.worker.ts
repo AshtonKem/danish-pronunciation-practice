@@ -4,6 +4,7 @@ import * as ort from 'onnxruntime-web/webgpu';
 import { TTS_MODELS } from '../catalog';
 import { requireCrossOriginIsolation } from '../lib/crossOriginIsolation';
 import { cachedFetch, type DownloadProgress } from '../lib/modelStore';
+import { isIosWebkit } from '../lib/platform';
 import { splitWords, toPhonemeStrings, type PhonemizeItem } from '../lib/phonemes';
 import { serve } from '../lib/rpc';
 import type { Device } from '../types';
@@ -259,7 +260,7 @@ async function createSession(
   // on it. 'webgpu' still probes for a real adapter first (see supportsWebgpu)
   // and, when found, passes both providers in one call so ORT's own internal
   // fallback has a safety net without us ever issuing a second top-level call.
-  const webgpu = preferred === 'webgpu' && (await supportsWebgpu());
+  const webgpu = preferred === 'webgpu' && !isIosWebkit() && (await supportsWebgpu());
   const executionProviders: Device[] = webgpu ? ['webgpu', 'wasm'] : ['wasm'];
 
   try {
